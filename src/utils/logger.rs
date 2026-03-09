@@ -2,6 +2,7 @@
 
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -9,6 +10,8 @@ pub struct Logger {
     verbose: bool,
     multi: Arc<MultiProgress>,
     progress_bar: Option<ProgressBar>,
+    total_bytes: Arc<AtomicU64>,
+    written_bytes: Arc<AtomicU64>,
 }
 
 impl Logger {
@@ -17,6 +20,8 @@ impl Logger {
             verbose: false,
             multi: Arc::new(MultiProgress::new()),
             progress_bar: None,
+            total_bytes: Arc::new(AtomicU64::new(0)),
+            written_bytes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -25,6 +30,8 @@ impl Logger {
             verbose,
             multi: Arc::new(MultiProgress::new()),
             progress_bar: None,
+            total_bytes: Arc::new(AtomicU64::new(0)),
+            written_bytes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -40,77 +47,90 @@ impl Logger {
     }
 
     pub fn info(&self, message: &str) {
-        self.multi
-            .suspend(|| {
-                println!("[{}] {}", "INFO".green().bold(), message);
-            });
+        self.multi.suspend(|| {
+            println!("[{}] {}", "INFO".green().bold(), message);
+        });
     }
 
     pub fn success(&self, message: &str) {
-        self.multi
-            .suspend(|| {
-                println!("[{}] {}", "SUCCESS".green().bold(), message);
-            });
+        self.multi.suspend(|| {
+            println!("[{}] {}", "SUCCESS".green().bold(), message);
+        });
     }
 
     pub fn warn(&self, message: &str) {
-        self.multi
-            .suspend(|| {
-                println!("[{}] {}", "WARN".yellow().bold(), message);
-            });
+        self.multi.suspend(|| {
+            println!("[{}] {}", "WARN".yellow().bold(), message);
+        });
     }
 
     pub fn error(&self, message: &str) {
-        self.multi
-            .suspend(|| {
-                eprintln!("[{}] {}", "ERROR".red().bold(), message);
-            });
+        self.multi.suspend(|| {
+            eprintln!("[{}] {}", "ERROR".red().bold(), message);
+        });
     }
 
     pub fn debug(&self, message: &str) {
         if self.verbose {
-            self.multi
-                .suspend(|| {
-                    println!("[{}] {}", "DEBUG".blue().bold(), message);
-                });
+            self.multi.suspend(|| {
+                println!("[{}] {}", "DEBUG".blue().bold(), message);
+            });
         }
     }
 
     pub fn stage(&self, stage_num: usize, total_stages: usize, message: &str) {
-        self.multi
-            .suspend(|| {
-                println!();
-                println!(
-                    "{} {}/{}: {}",
-                    "Stage".cyan().bold(),
-                    stage_num,
-                    total_stages,
-                    message.white().bold()
-                );
-            });
+        self.multi.suspend(|| {
+            println!();
+            println!(
+                "{} {}/{}: {}",
+                "Stage".cyan().bold(),
+                stage_num,
+                total_stages,
+                message.white().bold()
+            );
+        });
     }
 
     pub fn stage_complete(&self, message: &str) {
-        self.multi
-            .suspend(|| {
-                println!("  {} {}", "✓".green(), message);
-            });
+        self.multi.suspend(|| {
+            println!("  {} {}", "✓".green(), message);
+        });
     }
 
-    pub fn progress(&mut self, current: usize, total: usize, message: &str) {
-        if self.progress_bar.is_none() {
-            let pb = self.multi.add(ProgressBar::new(total as u64));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes:>10}/{total_bytes:<10} {bytes_per_sec:>12} {msg}")
-                    .unwrap()
-                    .progress_chars("█░"),
-            );
-            self.progress_bar = Some(pb);
-        }
+    pub fn start_global_progress(&mut self, total: u64, message: &str) {
+        self.total_bytes.store(total, Ordering::SeqCst);
+        self.written_bytes.store(0, Ordering::SeqCst);
 
+        let pb = self.multi.add(ProgressBar::new(total));
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes:>10}/{total_bytes:<10} {bytes_per_sec:>12} {msg}")
+                .unwrap()
+                .progress_chars("█░"),
+        );
+        pb.set_message(message.to_string());
+        self.progress_bar = Some(pb);
+    }
+
+    pub fn add_total_bytes(&self, bytes: u64) {
+        self.total_bytes.fetch_add(bytes, Ordering::SeqCst);
         if let Some(ref pb) = self.progress_bar {
-            pb.set_position(current as u64);
+            pb.set_length(self.total_bytes.load(Ordering::SeqCst));
+        }
+    }
+
+    pub fn update_progress(&self, bytes_written: u64, message: &str) {
+        self.written_bytes.store(bytes_written, Ordering::SeqCst);
+        if let Some(ref pb) = self.progress_bar {
+            pb.set_position(bytes_written);
+            pb.set_message(message.to_string());
+        }
+    }
+
+    pub fn increment_progress(&self, bytes: u64, message: &str) {
+        let current = self.written_bytes.fetch_add(bytes, Ordering::SeqCst) + bytes;
+        if let Some(ref pb) = self.progress_bar {
+            pb.set_position(current);
             pb.set_message(message.to_string());
         }
     }
@@ -120,6 +140,10 @@ impl Logger {
             pb.set_position(current as u64);
             pb.set_message(message.to_string());
         }
+    }
+
+    pub fn get_written_bytes(&self) -> u64 {
+        self.written_bytes.load(Ordering::SeqCst)
     }
 
     pub fn finish_progress(&mut self) {
