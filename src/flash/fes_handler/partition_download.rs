@@ -8,6 +8,14 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
 
+struct SparseDownloadParams<'a> {
+    data_offset: u64,
+    data_length: u64,
+    start_sector: u32,
+    partition_name: &'a str,
+    verify_enabled: bool,
+}
+
 pub struct PartitionDownload<'a> {
     logger: &'a mut Logger,
 }
@@ -170,11 +178,13 @@ impl<'a> PartitionDownload<'a> {
         self.download_sparse_from_reader(
             ctx,
             &mut cursor,
-            0,
-            total_size,
-            info.partition_address as u32,
-            &info.partition_name,
-            verify,
+            &SparseDownloadParams {
+                data_offset: 0,
+                data_length: total_size,
+                start_sector: info.partition_address as u32,
+                partition_name: &info.partition_name,
+                verify_enabled: verify,
+            },
         )
         .await?;
 
@@ -188,12 +198,14 @@ impl<'a> PartitionDownload<'a> {
         &mut self,
         ctx: &libefex::Context,
         file: &mut R,
-        data_offset: u64,
-        data_length: u64,
-        start_sector: u32,
-        partition_name: &str,
-        verify_enabled: bool,
+        params: &SparseDownloadParams<'_>,
     ) -> FlashResult<()> {
+        let data_offset = params.data_offset;
+        let data_length = params.data_length;
+        let start_sector = params.start_sector;
+        let partition_name = params.partition_name;
+        let verify_enabled = params.verify_enabled;
+
         file.seek(SeekFrom::Start(data_offset)).map_err(|e| {
             FlashError::InvalidFirmwareFormat(format!("Failed to seek file offset: {}", e))
         })?;

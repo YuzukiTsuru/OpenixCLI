@@ -526,7 +526,7 @@ impl<'a> SparseParser<'a> {
             return Ok(());
         }
 
-        if self.chunk_length % SECTOR_SIZE as u32 != 0 {
+        if !self.chunk_length.is_multiple_of(SECTOR_SIZE as u32) {
             return Err(FlashError::InvalidFirmwareFormat(
                 "Fill data is not sector aligned".to_string(),
             ));
