@@ -1,19 +1,20 @@
 mod boot_download;
 mod erase_flag;
 mod mbr_download;
-mod partition_download;
+mod partition;
 mod types;
 
 pub use boot_download::BootDownload;
 pub use erase_flag::EraseFlag;
 pub use mbr_download::MbrDownload;
-pub use partition_download::PartitionDownload;
+pub use partition::PartitionDownload;
 pub use types::PartitionDownloadInfo;
 
 use crate::config::boot_header::get_sunxi_boot_file_mode_string;
 use crate::config::mbr_parser::SunxiMbr;
 use crate::firmware::{OpenixPacker, StorageType};
 use crate::flash::FlashMode;
+use crate::process::StageType;
 use crate::utils::{FlashError, FlashResult, Logger};
 
 pub struct FesHandler<'a> {
@@ -31,6 +32,8 @@ impl<'a> FesHandler<'a> {
         packer: &mut OpenixPacker,
         options: &crate::flash::FlashOptions,
     ) -> FlashResult<()> {
+        self.logger.begin_stage(StageType::FesQuery);
+        
         let secure = ctx
             .fes_query_secure()
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
@@ -54,12 +57,18 @@ impl<'a> FesHandler<'a> {
             "Flash size: {} MB",
             (flash_size as u64) * 512 / 1024 / 1024
         ));
+        
+        self.logger.complete_stage();
 
         if options.mode != FlashMode::Partition {
+            self.logger.begin_stage(StageType::FesErase);
             let erase_flag = EraseFlag::new(&*self.logger);
             erase_flag.execute(ctx, options.mode).await?;
+            self.logger.complete_stage();
         }
 
+        self.logger.begin_stage(StageType::FesMbr);
+        
         let mbr_data = packer.get_mbr().map_err(|_| FlashError::MbrNotFound)?;
         let mbr = SunxiMbr::parse(&mbr_data)
             .map_err(|e| FlashError::InvalidFirmwareFormat(e.to_string()))?;
@@ -70,19 +79,31 @@ impl<'a> FesHandler<'a> {
 
         let mbr_download = MbrDownload::new(&*self.logger);
         mbr_download.execute(ctx, &mbr_data).await?;
+        
+        self.logger.complete_stage();
 
         let download_list = self.prepare_partition_download_list(packer, &mbr_info, options)?;
         if !download_list.is_empty() {
+            self.logger.begin_stage(StageType::FesPartitions);
+            
+            let total_bytes: u64 = download_list.iter().map(|p| p.data_length).sum();
+            self.logger.set_partition_stage_weight(total_bytes);
+            
             {
                 let mut partition_download = PartitionDownload::new(&mut *self.logger);
                 partition_download
                     .execute(ctx, packer, &download_list, options.verify)
                     .await?;
             }
+            
+            self.logger.complete_stage();
+            
+            self.logger.begin_stage(StageType::FesBoot);
             let boot_download = BootDownload::new(&*self.logger);
             boot_download
                 .execute(ctx, packer, secure, storage_type)
                 .await?;
+            self.logger.complete_stage();
         }
 
         Ok(())

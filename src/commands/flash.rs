@@ -65,11 +65,11 @@ pub async fn execute(
         post_action: post_action.to_string(),
     };
 
-    let mut flasher = Flasher::new(packer, options, logger);
+    let mut flasher = Flasher::new(packer, options, logger.clone());
     flasher.execute().await?;
 
     println!();
-    println!("[SUCCESS] Firmware flashed successfully!");
+    logger.stage_complete("All partitions flashed successfully");
 
     Ok(())
 }

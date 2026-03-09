@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod firmware;
 mod flash;
+mod process;
 mod utils;
 
 use cli::{Cli, Commands};

@@ -4,4 +4,4 @@ pub mod terminal;
 
 pub use error::{FlashError, FlashResult};
 pub use logger::Logger;
-pub use terminal::{multi_progress, TermLogger};
+pub use terminal::TermLogger;

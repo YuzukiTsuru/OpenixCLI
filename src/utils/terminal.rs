@@ -1,20 +1,16 @@
 #![allow(dead_code)]
 
 use colored::Colorize;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::MultiProgress;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::Lazy;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(|| Arc::new(MultiProgress::new()));
+static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(|| crate::process::multi_progress());
 
 static mut VERBOSE_MODE: bool = false;
-
-pub fn multi_progress() -> Arc<MultiProgress> {
-    Arc::clone(&MULTI_PROGRESS)
-}
 
 pub fn set_verbose(verbose: bool) {
     unsafe {
@@ -94,7 +90,6 @@ impl Log for TermLogger {
 
 pub struct ProgressManager {
     multi: Arc<MultiProgress>,
-    progress_bar: Option<ProgressBar>,
     total_bytes: Arc<AtomicU64>,
     written_bytes: Arc<AtomicU64>,
 }
@@ -102,79 +97,18 @@ pub struct ProgressManager {
 impl ProgressManager {
     pub fn new() -> Self {
         Self {
-            multi: multi_progress(),
-            progress_bar: None,
+            multi: crate::process::multi_progress(),
             total_bytes: Arc::new(AtomicU64::new(0)),
             written_bytes: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    pub fn start_progress(&mut self, total: u64, message: &str) {
-        self.total_bytes.store(total, Ordering::SeqCst);
-        self.written_bytes.store(0, Ordering::SeqCst);
-
-        let pb = self.multi.add(ProgressBar::new(total));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes:>10}/{total_bytes:<10} {bytes_per_sec:>12} {msg}")
-                .unwrap()
-                .progress_chars("█░"),
-        );
-        pb.set_message(message.to_string());
-        self.progress_bar = Some(pb);
-    }
-
     pub fn add_total_bytes(&self, bytes: u64) {
         self.total_bytes.fetch_add(bytes, Ordering::SeqCst);
-        if let Some(ref pb) = self.progress_bar {
-            pb.set_length(self.total_bytes.load(Ordering::SeqCst));
-        }
-    }
-
-    pub fn update_progress(&self, bytes_written: u64, message: &str) {
-        self.written_bytes.store(bytes_written, Ordering::SeqCst);
-        if let Some(ref pb) = self.progress_bar {
-            pb.set_position(bytes_written);
-            if !message.is_empty() {
-                pb.set_message(message.to_string());
-            }
-        }
-    }
-
-    pub fn increment_progress(&self, bytes: u64, message: &str) {
-        let current = self.written_bytes.fetch_add(bytes, Ordering::SeqCst) + bytes;
-        if let Some(ref pb) = self.progress_bar {
-            pb.set_position(current);
-            if !message.is_empty() {
-                pb.set_message(message.to_string());
-            }
-        }
-    }
-
-    pub fn set_message(&self, message: &str) {
-        if let Some(ref pb) = self.progress_bar {
-            pb.set_message(message.to_string());
-        }
     }
 
     pub fn get_written_bytes(&self) -> u64 {
         self.written_bytes.load(Ordering::SeqCst)
-    }
-
-    pub fn finish_progress(&mut self) {
-        if let Some(pb) = self.progress_bar.take() {
-            pb.finish();
-        }
-    }
-
-    pub fn finish_with_message(&mut self, message: &str) {
-        if let Some(pb) = self.progress_bar.take() {
-            pb.finish_with_message(message.to_string());
-        }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.progress_bar.is_some()
     }
 }
 
@@ -186,13 +120,13 @@ impl Default for ProgressManager {
 
 pub fn log_info(message: &str) {
     MULTI_PROGRESS.suspend(|| {
-        println!("[{}] {}", "INFO".green().bold(), message);
+        println!("[{}] {}", "INFO".cyan().bold(), message);
     });
 }
 
 pub fn log_success(message: &str) {
     MULTI_PROGRESS.suspend(|| {
-        println!("[{}] {}", "SUCCESS".green().bold(), message);
+        println!("[{}] {}", "OKAY".green().bold(), message);
     });
 }
 
@@ -204,35 +138,20 @@ pub fn log_warn(message: &str) {
 
 pub fn log_error(message: &str) {
     MULTI_PROGRESS.suspend(|| {
-        eprintln!("[{}] {}", "ERROR".red().bold(), message);
+        eprintln!("[{}] {}", "ERRO".red().bold(), message);
     });
 }
 
 pub fn log_debug(message: &str) {
     if is_verbose() {
         MULTI_PROGRESS.suspend(|| {
-            println!("[{}] {}", "DEBUG".blue().bold(), message);
+            println!("[{}] {}", "DEBG".blue().bold(), message);
         });
     }
 }
 
-pub fn log_stage(stage_num: usize, total_stages: usize, message: &str) {
-    MULTI_PROGRESS.suspend(|| {
-        println!();
-        println!(
-            "{} {}/{}: {}",
-            "Stage".cyan().bold(),
-            stage_num,
-            total_stages,
-            message.white().bold()
-        );
-    });
-}
-
 pub fn log_stage_complete(message: &str) {
-    MULTI_PROGRESS.suspend(|| {
-        println!("  {} {}", "✓".green(), message);
-    });
+    log_success(message);
 }
 
 pub fn format_size(bytes: u64) -> String {
