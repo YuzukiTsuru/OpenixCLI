@@ -1,11 +1,14 @@
 #![allow(dead_code)]
 
+use crate::utils::multi_progress;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::Arc;
 
 pub struct ProgressManager {
     stages: Vec<Stage>,
     current_stage: usize,
     progress_bar: Option<ProgressBar>,
+    multi: Arc<indicatif::MultiProgress>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +31,7 @@ impl ProgressManager {
             stages: Vec::new(),
             current_stage: 0,
             progress_bar: None,
+            multi: multi_progress(),
         }
     }
 
@@ -55,7 +59,7 @@ impl ProgressManager {
         }
 
         if self.progress_bar.is_none() {
-            let pb = ProgressBar::new(100);
+            let pb = self.multi.add(ProgressBar::new(100));
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>3}% {msg}")

@@ -1,6 +1,4 @@
 use clap::Parser;
-use colored::Colorize;
-use env_logger::{Builder, Env};
 
 mod cli;
 mod commands;
@@ -10,22 +8,12 @@ mod flash;
 mod utils;
 
 use cli::{Cli, Commands};
+use utils::TermLogger;
 
 fn setup_logging(verbose: bool) {
-    let level = if verbose { "debug" } else { "info" };
-    Builder::from_env(Env::default().default_filter_or(level))
-        .format(|buf, record| {
-            use std::io::Write;
-            let level_style = match record.level() {
-                log::Level::Error => "ERRO".red().bold(),
-                log::Level::Warn => "WARN".yellow().bold(),
-                log::Level::Info => "INFO".green().bold(),
-                log::Level::Debug => "DEBG".blue().bold(),
-                log::Level::Trace => "TRCE".white().bold(),
-            };
-            writeln!(buf, "[{}] {}", level_style, record.args())
-        })
-        .init();
+    if let Err(e) = TermLogger::init(verbose) {
+        eprintln!("Failed to initialize logger: {}", e);
+    }
 }
 
 #[tokio::main]
