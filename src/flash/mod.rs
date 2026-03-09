@@ -60,10 +60,8 @@ impl Flasher {
 
         self.logger.stage(1, total_stages, "Preparing FES...");
         let fes_data = self.packer.get_fes().map_err(|_| FlashError::FesNotFound)?;
-        self.logger.stage_complete(&format!(
-            "FES data loaded ({} bytes)",
-            fes_data.len()
-        ));
+        self.logger
+            .stage_complete(&format!("FES data loaded ({} bytes)", fes_data.len()));
 
         let mut ctx = if let (Some(bus), Some(port)) = (self.options.bus, self.options.port) {
             let mut ctx = libefex::Context::new();
@@ -86,34 +84,36 @@ impl Flasher {
 
         ctx.usb_init()
             .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
+
         ctx.efex_init()
             .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
 
         let mode = ctx.get_device_mode();
-        self.logger.info(&format!(
-            "Device mode: {:?}",
-            mode
-        ));
+        self.logger.info(&format!("Device mode: {:?}", mode));
 
         if mode != libefex::DeviceMode::Fel {
-            self.logger.info("Device is not in FEL mode, skipping FEL handler");
+            self.logger
+                .info("Device is not in FEL mode, skipping FEL handler");
         } else {
             self.logger.stage(2, total_stages, "Initializing DRAM...");
             let fel_handler = FelHandler::new(&self.logger);
-            fel_handler
-                .handle(&mut ctx, &fes_data).await?;
+            fel_handler.handle(&mut ctx, &fes_data).await?;
             self.logger.stage_complete("DRAM initialized successfully");
 
             self.logger.stage(3, total_stages, "Downloading U-Boot...");
+
             let uboot_data = self
                 .packer
                 .get_uboot()
                 .map_err(|_| FlashError::UbootNotFound)?;
+
             let dtb_data = self.packer.get_dtb().ok();
+
             let sysconfig_data = self
                 .packer
                 .get_sys_config_bin()
                 .map_err(|_| FlashError::SysConfigNotFound)?;
+
             let board_config_data = self.packer.get_board_config().ok();
 
             fel_handler
@@ -125,30 +125,35 @@ impl Flasher {
                     board_config_data.as_deref(),
                 )
                 .await?;
-            self.logger.stage_complete(&format!(
-                "U-Boot downloaded ({} bytes)",
-                uboot_data.len()
-            ));
+
+            self.logger
+                .stage_complete(&format!("U-Boot downloaded ({} bytes)", uboot_data.len()));
 
             self.logger.stage(4, total_stages, "Reconnecting...");
+
             ctx = self.reconnect_device().await?;
+
             self.logger.stage_complete("Device reconnected in FES mode");
         }
 
         self.logger.stage(5, total_stages, "Flashing partitions...");
+
         let mut fes_handler = FesHandler::new(&mut self.logger);
+
         fes_handler
             .handle(&ctx, &mut self.packer, &self.options)
             .await?;
+
         self.logger.finish_progress();
+
         self.logger.stage_complete("All partitions flashed");
 
         self.logger.stage(6, total_stages, "Setting device mode...");
+
         self.set_device_mode(&ctx).await?;
-        self.logger.stage_complete(&format!(
-            "Device will {}",
-            self.options.post_action
-        ));
+
+        self.logger
+            .stage_complete(&format!("Device will {}", self.options.post_action));
 
         Ok(())
     }
@@ -196,10 +201,8 @@ impl Flasher {
             }
 
             retries += 1;
-            self.logger.debug(&format!(
-                "Reconnect attempt {}/{}",
-                retries, max_retries
-            ));
+            self.logger
+                .debug(&format!("Reconnect attempt {}/{}", retries, max_retries));
         }
 
         Err(FlashError::ReconnectFailed)
