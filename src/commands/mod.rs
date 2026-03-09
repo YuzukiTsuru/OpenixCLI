@@ -1,2 +1,2 @@
-pub mod scan;
 pub mod flash;
+pub mod scan;

@@ -49,7 +49,7 @@ impl ProgressManager {
                 break;
             }
         }
-        
+
         if let Some(pos) = self.stages.iter().position(|s| s.name == name) {
             self.current_stage = pos;
         }

@@ -11,11 +11,7 @@ impl<'a> EraseFlag<'a> {
         Self { logger }
     }
 
-    pub async fn execute(
-        &self,
-        ctx: &libefex::Context,
-        mode: FlashMode,
-    ) -> FlashResult<()> {
+    pub async fn execute(&self, ctx: &libefex::Context, mode: FlashMode) -> FlashResult<()> {
         self.logger.info("Downloading erase flag...");
 
         let mut erase_data = vec![0u8; 16];

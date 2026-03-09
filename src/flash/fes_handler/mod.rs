@@ -65,10 +65,8 @@ impl<'a> FesHandler<'a> {
             .map_err(|e| FlashError::InvalidFirmwareFormat(e.to_string()))?;
         let mbr_info = mbr.to_mbr_info();
 
-        self.logger.info(&format!(
-            "Found {} partitions in MBR",
-            mbr_info.part_count
-        ));
+        self.logger
+            .info(&format!("Found {} partitions in MBR", mbr_info.part_count));
 
         let mbr_download = MbrDownload::new(&*self.logger);
         mbr_download.execute(ctx, &mbr_data).await?;
@@ -117,10 +115,8 @@ impl<'a> FesHandler<'a> {
             if options.mode == FlashMode::KeepData {
                 let name_lower = partition_name.to_lowercase();
                 if name_lower == "udisk" || name_lower == "private" || name_lower == "reserve" {
-                    self.logger.info(&format!(
-                        "Skipping user data partition: {}",
-                        partition_name
-                    ));
+                    self.logger
+                        .info(&format!("Skipping user data partition: {}", partition_name));
                     continue;
                 }
             }
@@ -137,9 +133,7 @@ impl<'a> FesHandler<'a> {
                 }
             }
 
-            let config_partition = config_partitions
-                .iter()
-                .find(|p| p.name == *partition_name);
+            let config_partition = config_partitions.iter().find(|p| p.name == *partition_name);
 
             let download_filename = match config_partition {
                 Some(cp) if !cp.downloadfile.is_empty() => cp.downloadfile.clone(),
@@ -156,9 +150,7 @@ impl<'a> FesHandler<'a> {
 
             let data_info = packer
                 .get_file_info_by_maintype_subtype(types::ITEM_ROOTFSFAT16, &download_subtype)
-                .or_else(|| {
-                    packer.get_file_info_by_maintype_subtype("12345678", &download_subtype)
-                })
+                .or_else(|| packer.get_file_info_by_maintype_subtype("12345678", &download_subtype))
                 .or_else(|| packer.get_file_info_by_filename(&download_filename));
 
             if let Some((offset, length)) = data_info {
@@ -173,8 +165,7 @@ impl<'a> FesHandler<'a> {
             } else {
                 self.logger.warn(&format!(
                     "Partition image not found: {} ({})",
-                    partition_name,
-                    download_filename
+                    partition_name, download_filename
                 ));
             }
         }

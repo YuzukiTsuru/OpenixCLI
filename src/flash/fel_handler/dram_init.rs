@@ -15,11 +15,7 @@ impl<'a> DramInit<'a> {
         Self { logger }
     }
 
-    pub async fn execute(
-        &self,
-        ctx: &mut libefex::Context,
-        fes_data: &[u8],
-    ) -> FlashResult<()> {
+    pub async fn execute(&self, ctx: &mut libefex::Context, fes_data: &[u8]) -> FlashResult<()> {
         self.logger.info("Initializing DRAM...");
 
         let fes_head = Boot0Header::parse(fes_data)

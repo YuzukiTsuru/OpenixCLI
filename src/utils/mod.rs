@@ -1,5 +1,5 @@
-pub mod logger;
 pub mod error;
+pub mod logger;
 
-pub use logger::Logger;
 pub use error::{FlashError, FlashResult};
+pub use logger::Logger;

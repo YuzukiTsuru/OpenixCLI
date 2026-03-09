@@ -14,18 +14,12 @@ impl<'a> MbrDownload<'a> {
         Self { logger }
     }
 
-    pub async fn execute(
-        &self,
-        ctx: &libefex::Context,
-        mbr_data: &[u8],
-    ) -> FlashResult<()> {
+    pub async fn execute(&self, ctx: &libefex::Context, mbr_data: &[u8]) -> FlashResult<()> {
         self.logger
             .info(&format!("Downloading MBR ({} bytes)...", mbr_data.len()));
 
         if !is_valid_mbr(mbr_data) {
-            return Err(FlashError::InvalidFirmwareFormat(
-                "Invalid MBR".to_string(),
-            ));
+            return Err(FlashError::InvalidFirmwareFormat("Invalid MBR".to_string()));
         }
 
         ctx.fes_down(mbr_data, 0, FesDataType::Mbr)

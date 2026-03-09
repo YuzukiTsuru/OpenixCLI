@@ -5,8 +5,8 @@ use env_logger::{Builder, Env};
 mod cli;
 mod commands;
 mod config;
-mod flash;
 mod firmware;
+mod flash;
 mod utils;
 
 use cli::{Cli, Commands};

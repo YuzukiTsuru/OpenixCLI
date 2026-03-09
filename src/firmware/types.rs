@@ -315,7 +315,10 @@ impl FileHeader {
             } else {
                 &self.data.v1.filename
             };
-            let end = filename_bytes.iter().position(|&b| b == 0).unwrap_or(filename_bytes.len());
+            let end = filename_bytes
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(filename_bytes.len());
             String::from_utf8_lossy(&filename_bytes[..end]).to_string()
         }
     }
