@@ -2,9 +2,9 @@
 name = "openixcli"
 version = "0.1.0"
 edition = "2021"
-description = "Firmware flashing CLI tool for Allwinner chips"
+description = "Tools for flash Allwinner Firmware to Devices."
 license = "MIT"
-authors = ["OpenixSuit Team"]
+authors = ["YuzukiTsuru"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
