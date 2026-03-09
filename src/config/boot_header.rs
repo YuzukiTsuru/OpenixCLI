@@ -149,14 +149,8 @@ impl UBootDataHeader {
     }
 
     pub fn set_work_mode(data: &mut [u8], mode: u32) {
-        let offset = std::mem::size_of::<[u32; 32]>()
-            + std::mem::size_of::<i32>() * 3
-            + std::mem::size_of::<UBootNormalGpioCfg>() * 2
-            + std::mem::size_of::<i32>()
-            + std::mem::size_of::<UBootNormalGpioCfg>() * 2;
-
-        if data.len() >= offset + 4 {
-            data[offset..offset + 4].copy_from_slice(&mode.to_le_bytes());
+        if let Ok(header) = Self::parse_mut(data) {
+            header.work_mode = mode as i32;
         }
     }
 }
