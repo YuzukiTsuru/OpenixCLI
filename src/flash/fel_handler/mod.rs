@@ -15,7 +15,11 @@ impl<'a> FelHandler<'a> {
         Self { logger }
     }
 
-    pub async fn handle(&self, ctx: &mut libefex::Context, fes_data: &[u8]) -> crate::utils::FlashResult<()> {
+    pub async fn handle(
+        &self,
+        ctx: &mut libefex::Context,
+        fes_data: &[u8],
+    ) -> crate::utils::FlashResult<()> {
         let dram_init = DramInit::new(self.logger);
         dram_init.execute(ctx, fes_data).await
     }

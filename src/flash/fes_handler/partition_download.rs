@@ -67,9 +67,7 @@ impl<'a> PartitionDownload<'a> {
         for info in download_list {
             self.logger.info(&format!(
                 "Flashing partition: {} ({} bytes at sector {})",
-                info.partition_name,
-                info.data_length,
-                info.partition_address
+                info.partition_name, info.data_length, info.partition_address
             ));
 
             written_bytes = self
@@ -142,18 +140,13 @@ impl<'a> PartitionDownload<'a> {
             let partition_name = info.partition_name.clone();
             let chunk_base_bytes = written_bytes as usize;
 
-            ctx.fes_down_with_progress(
-                &chunk_data,
-                chunk_start_sector,
-                FesDataType::Flash,
-                {
-                    let logger = &*self.logger;
-                    move |transferred, _total| {
-                        let current = chunk_base_bytes + transferred as usize;
-                        logger.progress_update(current, &partition_name);
-                    }
-                },
-            )
+            ctx.fes_down_with_progress(&chunk_data, chunk_start_sector, FesDataType::Flash, {
+                let logger = &*self.logger;
+                move |transferred, _total| {
+                    let current = chunk_base_bytes + transferred as usize;
+                    logger.progress_update(current, &partition_name);
+                }
+            })
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
             written_bytes += chunk_size as u64;

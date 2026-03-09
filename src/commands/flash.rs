@@ -1,5 +1,5 @@
-use crate::flash::{FlashMode, FlashOptions, Flasher};
 use crate::firmware::OpenixPacker;
+use crate::flash::{FlashMode, FlashOptions, Flasher};
 use crate::utils::logger::Logger;
 use std::path::Path;
 
@@ -20,7 +20,10 @@ pub async fn execute(
 
     let firmware_path = Path::new(firmware_path);
     if !firmware_path.exists() {
-        logger.error(&format!("Firmware file not found: {}", firmware_path.display()));
+        logger.error(&format!(
+            "Firmware file not found: {}",
+            firmware_path.display()
+        ));
         return Err(anyhow::anyhow!("Firmware file not found"));
     }
 

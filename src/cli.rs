@@ -28,16 +28,31 @@ pub enum Commands {
         #[arg(short = 'P', long, help = "USB port number")]
         port: Option<u8>,
 
-        #[arg(short = 'V', long, default_value = "true", help = "Enable verification after write")]
+        #[arg(
+            short = 'V',
+            long,
+            default_value = "true",
+            help = "Enable verification after write"
+        )]
         verify: bool,
 
-        #[arg(short, long, default_value = "full_erase", help = "Flash mode: partition, keep_data, partition_erase, full_erase")]
+        #[arg(
+            short,
+            long,
+            default_value = "full_erase",
+            help = "Flash mode: partition, keep_data, partition_erase, full_erase"
+        )]
         mode: String,
 
         #[arg(short = 'p', long, help = "Partitions to flash (comma-separated)")]
         partitions: Option<String>,
 
-        #[arg(short = 'a', long, default_value = "reboot", help = "Post-flash action: reboot, poweroff, shutdown")]
+        #[arg(
+            short = 'a',
+            long,
+            default_value = "reboot",
+            help = "Post-flash action: reboot, poweroff, shutdown"
+        )]
         post_action: String,
     },
 }

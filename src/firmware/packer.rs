@@ -72,7 +72,8 @@ impl OpenixPacker {
             let mut file_header_buf = [0u8; IMAGEWTY_FILEHDR_LEN];
             file.read_exact(&mut file_header_buf)?;
 
-            let file_header = FileHeader::parse(&file_header_buf).map_err(PackerError::ParseError)?;
+            let file_header =
+                FileHeader::parse(&file_header_buf).map_err(PackerError::ParseError)?;
             file_headers.push(*file_header);
         }
 
@@ -146,7 +147,10 @@ impl OpenixPacker {
     }
 
     fn get_header_version(&self) -> u32 {
-        self.image_header.as_ref().map(|h| h.header_version).unwrap_or(0)
+        self.image_header
+            .as_ref()
+            .map(|h| h.header_version)
+            .unwrap_or(0)
     }
 
     pub fn get_file_header_by_filename(&self, filename: &str) -> Option<&FileHeader> {
@@ -176,7 +180,10 @@ impl OpenixPacker {
             .get_file_header_by_filename(filename)
             .ok_or_else(|| PackerError::FileNotFound(filename.to_string()))?;
 
-        self.read_data_at_offset(file_header.offset(header_version), file_header.original_length(header_version))
+        self.read_data_at_offset(
+            file_header.offset(header_version),
+            file_header.original_length(header_version),
+        )
     }
 
     pub fn get_file_data_by_maintype_subtype(
@@ -191,11 +198,12 @@ impl OpenixPacker {
         let header_version = self.get_header_version();
         let file_header = self
             .get_file_header_by_maintype_subtype(maintype, subtype)
-            .ok_or_else(|| {
-                PackerError::FileNotFound(format!("{}/{}", maintype, subtype))
-            })?;
+            .ok_or_else(|| PackerError::FileNotFound(format!("{}/{}", maintype, subtype)))?;
 
-        self.read_data_at_offset(file_header.offset(header_version), file_header.original_length(header_version))
+        self.read_data_at_offset(
+            file_header.offset(header_version),
+            file_header.original_length(header_version),
+        )
     }
 
     pub fn get_file_info_by_maintype_subtype(
@@ -209,7 +217,10 @@ impl OpenixPacker {
 
         let header_version = self.get_header_version();
         let file_header = self.get_file_header_by_maintype_subtype(maintype, subtype)?;
-        Some((file_header.offset(header_version) as u64, file_header.original_length(header_version) as u64))
+        Some((
+            file_header.offset(header_version) as u64,
+            file_header.original_length(header_version) as u64,
+        ))
     }
 
     pub fn get_file_info_by_filename(&self, filename: &str) -> Option<(u64, u64)> {
@@ -219,7 +230,10 @@ impl OpenixPacker {
 
         let header_version = self.get_header_version();
         let file_header = self.get_file_header_by_filename(filename)?;
-        Some((file_header.offset(header_version) as u64, file_header.original_length(header_version) as u64))
+        Some((
+            file_header.offset(header_version) as u64,
+            file_header.original_length(header_version) as u64,
+        ))
     }
 
     fn read_data_at_offset(&mut self, offset: u32, length: u32) -> Result<Vec<u8>, PackerError> {
@@ -247,9 +261,7 @@ impl OpenixPacker {
         let header_version = self.get_header_version();
         let file_header = self
             .get_file_header_by_maintype_subtype(maintype, subtype)
-            .ok_or_else(|| {
-                PackerError::FileNotFound(format!("{}/{}", maintype, subtype))
-            })?;
+            .ok_or_else(|| PackerError::FileNotFound(format!("{}/{}", maintype, subtype)))?;
 
         let original_length = file_header.original_length(header_version) as u64;
         if start + length > original_length {
@@ -259,7 +271,10 @@ impl OpenixPacker {
             )));
         }
 
-        self.read_data_at_offset((file_header.offset(header_version) as u64 + start) as u32, length as u32)
+        self.read_data_at_offset(
+            (file_header.offset(header_version) as u64 + start) as u32,
+            length as u32,
+        )
     }
 
     pub fn build_subtype_by_filename(&self, partition_name: &str) -> String {

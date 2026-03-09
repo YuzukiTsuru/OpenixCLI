@@ -1,6 +1,4 @@
-use crate::config::boot_header::{
-    BOOT_FILE_MODE_NORMAL, BOOT_FILE_MODE_PKG, BOOT_FILE_MODE_TOC,
-};
+use crate::config::boot_header::{BOOT_FILE_MODE_NORMAL, BOOT_FILE_MODE_PKG, BOOT_FILE_MODE_TOC};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::{OpenixPacker, PackerError, StorageType};
 use crate::utils::{FlashError, FlashResult, Logger};
@@ -24,8 +22,10 @@ impl<'a> BootDownload<'a> {
     ) -> FlashResult<()> {
         self.logger.info("Downloading Boot0/Boot1...");
 
-        self.download_boot1(ctx, packer, secure, storage_type).await?;
-        self.download_boot0(ctx, packer, secure, storage_type).await?;
+        self.download_boot1(ctx, packer, secure, storage_type)
+            .await?;
+        self.download_boot0(ctx, packer, secure, storage_type)
+            .await?;
 
         self.logger.stage_complete("Boot0/Boot1 downloaded");
         Ok(())
@@ -139,9 +139,7 @@ impl<'a> BootDownload<'a> {
     ) -> Option<(&'static str, &'static str)> {
         if secure == BOOT_FILE_MODE_NORMAL || secure == BOOT_FILE_MODE_PKG {
             match StorageType::from(storage_type) {
-                StorageType::Nand | StorageType::Spinand => {
-                    Some(("BOOT    ", "BOOT0_0000000000"))
-                }
+                StorageType::Nand | StorageType::Spinand => Some(("BOOT    ", "BOOT0_0000000000")),
                 StorageType::Sdcard
                 | StorageType::Emmc
                 | StorageType::Emmc3
@@ -152,12 +150,8 @@ impl<'a> BootDownload<'a> {
             }
         } else {
             match StorageType::from(storage_type) {
-                StorageType::Sdcard | StorageType::Sd1 => {
-                    Some(("12345678", "TOC0_SDCARD00000"))
-                }
-                StorageType::Nand | StorageType::Spinand => {
-                    Some(("12345678", "TOC0_NAND0000000"))
-                }
+                StorageType::Sdcard | StorageType::Sd1 => Some(("12345678", "TOC0_SDCARD00000")),
+                StorageType::Nand | StorageType::Spinand => Some(("12345678", "TOC0_NAND0000000")),
                 StorageType::Spinor => Some(("12345678", "TOC0_SPINOR00000")),
                 StorageType::Ufs => Some(("12345678", "TOC0_UFS00000000")),
                 _ => Some(("12345678", "TOC0_00000000000")),
