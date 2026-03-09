@@ -325,7 +325,7 @@ impl<'a> FesHandler<'a> {
         let mut written_bytes: u64 = 0;
 
         if total_bytes > 0 {
-            self.logger.progress(0, total_bytes as usize, "Initializing...");
+            self.logger.start_global_progress(total_bytes, "Initializing...");
         }
 
         for info in download_list {
