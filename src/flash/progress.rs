@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::utils::multi_progress;
+use crate::process::multi_progress;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
 

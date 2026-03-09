@@ -9,6 +9,7 @@ pub use fel_handler::FelHandler;
 pub use fes_handler::FesHandler;
 
 use crate::firmware::OpenixPacker;
+use crate::process::{FlashStages, StageType};
 use crate::utils::{FlashError, FlashResult, Logger};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,12 +57,7 @@ impl Flasher {
     }
 
     pub async fn execute(&mut self) -> FlashResult<()> {
-        let total_stages = 6;
-
-        self.logger.stage(1, total_stages, "Preparing FES...");
         let fes_data = self.packer.get_fes().map_err(|_| FlashError::FesNotFound)?;
-        self.logger
-            .stage_complete(&format!("FES data loaded ({} bytes)", fes_data.len()));
 
         let mut ctx = if let (Some(bus), Some(port)) = (self.options.bus, self.options.port) {
             let mut ctx = libefex::Context::new();
@@ -91,16 +87,29 @@ impl Flasher {
         let mode = ctx.get_device_mode();
         self.logger.info(&format!("Device mode: {:?}", mode));
 
-        if mode != libefex::DeviceMode::Fel {
-            self.logger
-                .info("Device is not in FEL mode, skipping FEL handler");
+        let has_fel = mode == libefex::DeviceMode::Fel;
+
+        if has_fel {
+            let stages = FlashStages::for_fel_mode();
+            self.logger.define_stages(stages.stages());
         } else {
-            self.logger.stage(2, total_stages, "Initializing DRAM...");
+            let stages = FlashStages::for_fes_mode();
+            self.logger.define_stages(stages.stages());
+        }
+
+        self.logger.start_global_progress();
+
+        self.logger.begin_stage(StageType::Init);
+        self.logger.info(&format!("FES data loaded ({} bytes)", fes_data.len()));
+        self.logger.complete_stage();
+
+        if has_fel {
+            self.logger.begin_stage(StageType::FelDram);
             let fel_handler = FelHandler::new(&self.logger);
             fel_handler.handle(&mut ctx, &fes_data).await?;
-            self.logger.stage_complete("DRAM initialized successfully");
+            self.logger.complete_stage();
 
-            self.logger.stage(3, total_stages, "Downloading U-Boot...");
+            self.logger.begin_stage(StageType::FelUboot);
 
             let uboot_data = self
                 .packer
@@ -127,16 +136,15 @@ impl Flasher {
                 .await?;
 
             self.logger
-                .stage_complete(&format!("U-Boot downloaded ({} bytes)", uboot_data.len()));
+                .info(&format!("U-Boot downloaded ({} bytes)", uboot_data.len()));
+            self.logger.complete_stage();
 
-            self.logger.stage(4, total_stages, "Reconnecting...");
+            self.logger.begin_stage(StageType::FelReconnect);
 
             ctx = self.reconnect_device().await?;
 
-            self.logger.stage_complete("Device reconnected in FES mode");
+            self.logger.complete_stage();
         }
-
-        self.logger.stage(5, total_stages, "Flashing partitions...");
 
         let mut fes_handler = FesHandler::new(&mut self.logger);
 
@@ -145,10 +153,6 @@ impl Flasher {
             .await?;
 
         self.logger.finish_progress();
-
-        self.logger.stage_complete("All partitions flashed");
-
-        self.logger.stage(6, total_stages, "Setting device mode...");
 
         self.set_device_mode(&ctx).await?;
 
