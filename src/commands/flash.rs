@@ -1,34 +1,22 @@
-use crate::firmware::OpenixPacker;
+use crate::commands::FlashArgs;
 use crate::flash::{FlashMode, FlashOptions, Flasher};
 use crate::utils::logger::Logger;
-use std::path::Path;
 
-#[allow(clippy::too_many_arguments)]
-pub async fn execute(
-    firmware_path: &str,
-    bus: Option<u8>,
-    port: Option<u8>,
-    verify: bool,
-    mode: &str,
-    partitions: Option<&str>,
-    post_action: &str,
-    verbose: bool,
-) -> anyhow::Result<()> {
-    let logger = Logger::with_verbose(verbose);
+pub async fn execute(args: FlashArgs) -> anyhow::Result<()> {
+    let logger = Logger::with_verbose(args.verbose);
 
-    logger.info(&format!("Loading firmware: {}", firmware_path));
+    logger.info(&format!("Loading firmware: {}", args.firmware_path.display()));
 
-    let firmware_path = Path::new(firmware_path);
-    if !firmware_path.exists() {
+    if !args.firmware_path.exists() {
         logger.error(&format!(
             "Firmware file not found: {}",
-            firmware_path.display()
+            args.firmware_path.display()
         ));
         return Err(anyhow::anyhow!("Firmware file not found"));
     }
 
-    let mut packer = OpenixPacker::new();
-    packer.load(firmware_path)?;
+    let mut packer = crate::firmware::OpenixPacker::new();
+    packer.load(&args.firmware_path)?;
 
     let image_info = packer.get_image_info();
     logger.info(&format!(
@@ -37,32 +25,24 @@ pub async fn execute(
         image_info.num_files
     ));
 
-    if let (Some(bus), Some(port)) = (bus, port) {
+    if let (Some(bus), Some(port)) = (args.bus, args.port) {
         logger.info(&format!("Selected device: Bus {}, Port {}", bus, port));
     } else {
         logger.info("No device specified, will use first available device");
     }
 
-    let flash_mode = match mode {
-        "partition" => FlashMode::Partition,
-        "keep_data" => FlashMode::KeepData,
-        "partition_erase" => FlashMode::PartitionErase,
-        "full_erase" => FlashMode::FullErase,
-        _ => {
-            logger.error(&format!("Invalid flash mode: {}", mode));
-            return Err(anyhow::anyhow!("Invalid flash mode"));
-        }
-    };
-
-    let partition_list = partitions.map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
-
     let options = FlashOptions {
-        bus,
-        port,
-        verify,
-        mode: flash_mode,
-        partitions: partition_list,
-        post_action: post_action.to_string(),
+        bus: args.bus,
+        port: args.port,
+        verify: args.verify,
+        mode: match args.mode {
+            crate::commands::FlashMode::Partition => FlashMode::Partition,
+            crate::commands::FlashMode::KeepData => FlashMode::KeepData,
+            crate::commands::FlashMode::PartitionErase => FlashMode::PartitionErase,
+            crate::commands::FlashMode::FullErase => FlashMode::FullErase,
+        },
+        partitions: args.partitions,
+        post_action: args.post_action,
     };
 
     let mut flasher = Flasher::new(packer, options, logger.clone());
