@@ -2,8 +2,6 @@
 
 pub mod fel_handler;
 pub mod fes_handler;
-pub mod progress;
-pub mod types;
 
 pub use fel_handler::FelHandler;
 pub use fes_handler::FesHandler;

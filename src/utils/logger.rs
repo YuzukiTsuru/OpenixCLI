@@ -87,10 +87,6 @@ impl Logger {
         self.reporter.finish();
     }
 
-    pub fn progress_update(&self, current: usize, _message: &str) {
-        self.reporter.update_progress(current as u64);
-    }
-
     #[allow(dead_code)]
     pub fn update_progress_percent(&self, percent: u8) {
         self.reporter.update_progress_percent(percent);

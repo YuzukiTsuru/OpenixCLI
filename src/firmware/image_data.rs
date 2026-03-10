@@ -92,9 +92,3 @@ static IMAGE_ENTRY_MAP: Lazy<HashMap<&'static str, &'static ImageDataEntry>> = L
 pub fn get_image_data_entry(name: &str) -> Option<&'static ImageDataEntry> {
     IMAGE_ENTRY_MAP.get(name).copied()
 }
-
-pub fn get_maintype_subtype(name: &str) -> Option<(&'static str, &'static str)> {
-    IMAGE_ENTRY_MAP
-        .get(name)
-        .map(|entry| (entry.maintype, entry.subtype))
-}

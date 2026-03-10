@@ -7,9 +7,6 @@ use crate::utils::{FlashError, FlashResult, Logger};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
-const SPEED_UPDATE_INTERVAL: u64 = 64 * 1024;
-
 pub struct PartitionDownload<'a> {
     logger: &'a mut Logger,
     written_bytes: Arc<AtomicU64>,

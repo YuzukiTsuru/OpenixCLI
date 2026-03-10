@@ -1,3 +1,4 @@
+use super::super::constants;
 use super::super::types::PartitionDownloadInfo;
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::sparse::{
@@ -10,8 +11,6 @@ use libefex::FesDataType;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
-const SPEED_UPDATE_INTERVAL: u64 = 64 * 1024;
 
 pub struct SparseDownloader<'a> {
     logger: &'a Logger,
@@ -40,12 +39,11 @@ impl<'a> SparseDownloader<'a> {
         verify: bool,
     ) -> FlashResult<()> {
         let total_size = info.data_length;
-        let buffer_size = 256 * 1024usize;
         let mut all_data = Vec::with_capacity(total_size as usize);
 
         let mut offset: u64 = 0;
         while offset < total_size {
-            let chunk_size = std::cmp::min(buffer_size as u64, total_size - offset);
+            let chunk_size = std::cmp::min(constants::BUFFER_SIZE as u64, total_size - offset);
             let chunk_data = packer
                 .get_file_data_range_by_maintype_subtype(
                     super::super::types::ITEM_ROOTFSFAT16,
@@ -128,10 +126,9 @@ impl<'a> SparseDownloader<'a> {
             Arc::clone(&self.last_speed_update),
         );
 
-        let buffer_size = 256 * 1024usize;
-        let mut buffer = vec![0u8; buffer_size];
+        let mut buffer = vec![0u8; constants::BUFFER_SIZE];
 
-        let first_read_size = std::cmp::min(buffer_size, data_length as usize);
+        let first_read_size = std::cmp::min(constants::BUFFER_SIZE, data_length as usize);
         file.seek(SeekFrom::Start(data_offset)).map_err(|e| {
             FlashError::InvalidFirmwareFormat(format!("Failed to seek file offset: {}", e))
         })?;
@@ -141,22 +138,18 @@ impl<'a> SparseDownloader<'a> {
             FlashError::InvalidFirmwareFormat(format!("Failed to read initial data: {}", e))
         })?;
 
-        parser
-            .parse_and_download(ctx, &read_buf, first_read_size, partition_name, data_length)
-            .await?;
+        parser.parse_and_download(ctx, &read_buf, first_read_size).await?;
 
         let mut left_len = data_length as i64 - first_read_size as i64;
 
-        while left_len >= buffer_size as i64 {
+        while left_len >= constants::BUFFER_SIZE as i64 {
             file.read_exact(&mut buffer).map_err(|e| {
                 FlashError::InvalidFirmwareFormat(format!("Failed to read data chunk: {}", e))
             })?;
 
-            parser
-                .parse_and_download(ctx, &buffer, buffer_size, partition_name, data_length)
-                .await?;
+            parser.parse_and_download(ctx, &buffer, constants::BUFFER_SIZE).await?;
 
-            left_len -= buffer_size as i64;
+            left_len -= constants::BUFFER_SIZE as i64;
         }
 
         if left_len > 0 {
@@ -166,9 +159,7 @@ impl<'a> SparseDownloader<'a> {
                 FlashError::InvalidFirmwareFormat(format!("Failed to read remaining data: {}", e))
             })?;
 
-            parser
-                .parse_and_download(ctx, &remaining_buf, remaining, partition_name, data_length)
-                .await?;
+            parser.parse_and_download(ctx, &remaining_buf, remaining).await?;
         }
 
         if parser.need_verify() {
@@ -288,8 +279,6 @@ impl<'a> SparseParser<'a> {
         ctx: &libefex::Context,
         buffer: &[u8],
         length: usize,
-        partition_name: &str,
-        partition_total_bytes: u64,
     ) -> FlashResult<()> {
         use crate::firmware::sparse::{
             ALIGNMENT_SIZE, MIN_DOWNLOAD_SIZE, SECTOR_SIZE,
@@ -364,18 +353,13 @@ impl<'a> SparseParser<'a> {
                                 ));
                             }
 
-                            self.logger.debug(&format!(
-                                "RAW chunk at sector 0x{:x}, size {} bytes",
-                                self.flash_sector, self.chunk_length
-                            ));
-
                             if self.last_chunk_type != LastChunkType::Raw {
                                 self.checksum = 0;
                                 self.rawdata_start_sector = self.flash_sector;
                                 self.rawdata_size = 0;
                             }
 
-                            self.logger.info(&format!(
+                            self.logger.debug(&format!(
                                 "Downloading RAW chunk at sector 0x{:x}, size {} bytes",
                                 self.flash_sector, self.chunk_length
                             ));
@@ -407,11 +391,6 @@ impl<'a> SparseParser<'a> {
                                 self.flash_sector, self.chunk_length
                             ));
 
-                            self.logger.info(&format!(
-                                "don't care chunk at sector 0x{:x}, size {} bytes, total written {} bytes",
-                                self.flash_sector, self.chunk_length, self.total_written
-                            ));
-
                             self.flash_sector = self
                                 .flash_sector
                                 .wrapping_add(self.chunk_length / SECTOR_SIZE as u32);
@@ -433,13 +412,7 @@ impl<'a> SparseParser<'a> {
 
                     if unenough_length == 0 {
                         let data = &work_buffer[offset..offset + self.chunk_length as usize];
-                        self.download_data(
-                            ctx,
-                            data,
-                            true,
-                            partition_name,
-                            partition_total_bytes,
-                        )?;
+                        self.download_data(ctx, data, true)?;
 
                         this_rest_size -= self.chunk_length as usize;
                         offset += self.chunk_length as usize;
@@ -458,13 +431,7 @@ impl<'a> SparseParser<'a> {
                         };
 
                         let data = &work_buffer[offset..offset + download_size];
-                        self.download_data(
-                            ctx,
-                            data,
-                            true,
-                            partition_name,
-                            partition_total_bytes,
-                        )?;
+                        self.download_data(ctx, data, true)?;
 
                         offset += download_size;
                         self.chunk_length -= download_size as u32;
@@ -496,7 +463,7 @@ impl<'a> SparseParser<'a> {
                         self.flash_sector, self.chunk_length, fill_value
                     ));
 
-                    self.process_fill_chunk(ctx, fill_value, partition_name)?;
+                    self.process_fill_chunk(ctx, fill_value)?;
                     self.chunk_length = 0;
                     self.state = ParseState::ChunkHead;
                 }
@@ -518,8 +485,6 @@ impl<'a> SparseParser<'a> {
         ctx: &libefex::Context,
         data: &[u8],
         update_verify: bool,
-        _partition_name: &str,
-        _partition_total_bytes: u64,
     ) -> FlashResult<()> {
         use crate::firmware::sparse::{add_sum, SECTOR_SIZE};
 
@@ -537,7 +502,7 @@ impl<'a> SparseParser<'a> {
                 let current = written_bytes.fetch_add(written, Ordering::SeqCst) + written;
                 let last = last_speed_update.load(Ordering::SeqCst);
                 
-                if current.saturating_sub(last) >= SPEED_UPDATE_INTERVAL {
+                if current.saturating_sub(last) >= constants::SPEED_UPDATE_INTERVAL {
                     last_speed_update.store(current, Ordering::SeqCst);
                     logger.update_progress_with_speed(current);
                 }
@@ -560,7 +525,6 @@ impl<'a> SparseParser<'a> {
         &mut self,
         ctx: &libefex::Context,
         fill_value: u32,
-        partition_name: &str,
     ) -> FlashResult<()> {
         use crate::firmware::sparse::{MAX_FILL_COUNT, SECTOR_SIZE};
 
@@ -588,13 +552,13 @@ impl<'a> SparseParser<'a> {
         let mut remaining = self.chunk_length;
 
         while remaining >= MAX_FILL_COUNT * 16 {
-            self.download_data(ctx, &fill_buffer, false, partition_name, 0)?;
+            self.download_data(ctx, &fill_buffer, false)?;
             remaining -= MAX_FILL_COUNT * 16;
         }
 
         if remaining > 0 {
             let remaining_usize = remaining as usize;
-            self.download_data(ctx, &fill_buffer[..remaining_usize], false, partition_name, 0)?;
+            self.download_data(ctx, &fill_buffer[..remaining_usize], false)?;
         }
 
         Ok(())

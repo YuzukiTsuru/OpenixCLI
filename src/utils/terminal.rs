@@ -5,7 +5,6 @@ use indicatif::MultiProgress;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::Lazy;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(|| crate::process::multi_progress());
@@ -88,36 +87,6 @@ impl Log for TermLogger {
     fn flush(&self) {}
 }
 
-pub struct ProgressManager {
-    multi: Arc<MultiProgress>,
-    total_bytes: Arc<AtomicU64>,
-    written_bytes: Arc<AtomicU64>,
-}
-
-impl ProgressManager {
-    pub fn new() -> Self {
-        Self {
-            multi: crate::process::multi_progress(),
-            total_bytes: Arc::new(AtomicU64::new(0)),
-            written_bytes: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    pub fn add_total_bytes(&self, bytes: u64) {
-        self.total_bytes.fetch_add(bytes, Ordering::SeqCst);
-    }
-
-    pub fn get_written_bytes(&self) -> u64 {
-        self.written_bytes.load(Ordering::SeqCst)
-    }
-}
-
-impl Default for ProgressManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 pub fn log_info(message: &str) {
     MULTI_PROGRESS.suspend(|| {
         println!("[{}] {}", "INFO".cyan().bold(), message);
@@ -152,20 +121,4 @@ pub fn log_debug(message: &str) {
 
 pub fn log_stage_complete(message: &str) {
     log_success(message);
-}
-
-pub fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
 }

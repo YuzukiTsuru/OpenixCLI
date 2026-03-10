@@ -1,4 +1,5 @@
 mod boot_download;
+mod constants;
 mod erase_flag;
 mod mbr_download;
 mod partition;

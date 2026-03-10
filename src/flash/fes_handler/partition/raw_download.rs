@@ -1,3 +1,4 @@
+use super::super::constants;
 use super::super::types::{IncrementalChecksum, PartitionDownloadInfo, ITEM_ROOTFSFAT16};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::OpenixPacker;
@@ -5,9 +6,6 @@ use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
-const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
-const SPEED_UPDATE_INTERVAL: u64 = 64 * 1024;
 
 pub struct RawDownloader<'a> {
     logger: &'a Logger,
@@ -36,7 +34,7 @@ impl<'a> RawDownloader<'a> {
         verify: bool,
     ) -> FlashResult<()> {
         let start_sector = info.partition_address as u32;
-        let total_chunks = info.data_length.div_ceil(CHUNK_SIZE);
+        let total_chunks = info.data_length.div_ceil(constants::CHUNK_SIZE);
         let mut checksum = if verify {
             Some(IncrementalChecksum::new())
         } else {
@@ -44,9 +42,9 @@ impl<'a> RawDownloader<'a> {
         };
 
         for chunk_index in 0..total_chunks {
-            let chunk_offset = (chunk_index * CHUNK_SIZE) as usize;
+            let chunk_offset = (chunk_index * constants::CHUNK_SIZE) as usize;
             let chunk_size = std::cmp::min(
-                CHUNK_SIZE as usize,
+                constants::CHUNK_SIZE as usize,
                 (info.data_length as usize).saturating_sub(chunk_offset),
             );
 
@@ -91,7 +89,7 @@ impl<'a> RawDownloader<'a> {
                     let current = written_bytes.fetch_add(transferred, Ordering::SeqCst) + transferred;
                     let last = last_speed_update.load(Ordering::SeqCst);
                     
-                    if current.saturating_sub(last) >= SPEED_UPDATE_INTERVAL {
+                    if current.saturating_sub(last) >= constants::SPEED_UPDATE_INTERVAL {
                         last_speed_update.store(current, Ordering::SeqCst);
                         logger.update_progress_with_speed(current);
                     }
