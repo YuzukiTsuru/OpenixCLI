@@ -82,12 +82,13 @@ impl<'a> RawDownloader<'a> {
             let chunk_start_sector = start_sector.wrapping_add((chunk_offset / 512) as u32);
             let written_bytes = Arc::clone(&self.written_bytes);
             let last_speed_update = Arc::clone(&self.last_speed_update);
+            let chunk_base_bytes = self.written_bytes.load(Ordering::SeqCst);
 
             ctx.fes_down_with_progress(&chunk_data, chunk_start_sector, FesDataType::Flash, {
                 let logger = self.logger;
                 move |transferred, _total| {
-                    let current =
-                        written_bytes.fetch_add(transferred, Ordering::SeqCst) + transferred;
+                    let current = chunk_base_bytes + transferred;
+                    written_bytes.store(current, Ordering::SeqCst);
                     let last = last_speed_update.load(Ordering::SeqCst);
 
                     if current.saturating_sub(last) >= constants::SPEED_UPDATE_INTERVAL {

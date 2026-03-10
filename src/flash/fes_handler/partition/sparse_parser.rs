@@ -505,10 +505,12 @@ impl<'a> SparseParser<'a> {
         let written_bytes = Arc::clone(&self.written_bytes);
         let last_speed_update = Arc::clone(&self.last_speed_update);
         let logger = self.logger;
+        let chunk_base_bytes = self.written_bytes.load(Ordering::SeqCst);
 
         let written = ctx
             .fes_down_with_progress(data, sector, FesDataType::Flash, move |written, _total| {
-                let current = written_bytes.fetch_add(written, Ordering::SeqCst) + written;
+                let current = chunk_base_bytes + written;
+                written_bytes.store(current, Ordering::SeqCst);
                 let last = last_speed_update.load(Ordering::SeqCst);
 
                 if current.saturating_sub(last) >= constants::SPEED_UPDATE_INTERVAL {
