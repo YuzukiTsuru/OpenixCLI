@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::str::FromStr;
 
 mod cli;
 mod commands;
@@ -9,6 +10,7 @@ mod process;
 mod utils;
 
 use cli::{Cli, Commands};
+use commands::FlashArgs;
 use utils::TermLogger;
 
 fn setup_logging(verbose: bool) {
@@ -35,17 +37,24 @@ async fn main() -> anyhow::Result<()> {
             partitions,
             post_action,
         } => {
-            commands::flash::execute(
-                &firmware,
+            let flash_mode = commands::FlashMode::from_str(&mode)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            let partition_list = partitions
+                .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+
+            let args = FlashArgs {
+                firmware_path: firmware.into(),
                 bus,
                 port,
                 verify,
-                &mode,
-                partitions.as_deref(),
-                &post_action,
-                cli.verbose,
-            )
-            .await?;
+                mode: flash_mode,
+                partitions: partition_list,
+                post_action,
+                verbose: cli.verbose,
+            };
+
+            commands::flash::execute(args).await?;
         }
     }
 

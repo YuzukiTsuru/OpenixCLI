@@ -4,12 +4,14 @@ mod erase_flag;
 mod mbr_download;
 mod partition;
 mod types;
+mod ubifs_config;
 
 pub use boot_download::BootDownload;
 pub use erase_flag::EraseFlag;
 pub use mbr_download::MbrDownload;
 pub use partition::PartitionDownload;
 pub use types::PartitionDownloadInfo;
+pub use ubifs_config::UbifsConfig;
 
 use crate::config::boot_header::get_sunxi_boot_file_mode_string;
 use crate::config::mbr_parser::SunxiMbr;
@@ -78,12 +80,16 @@ impl<'a> FesHandler<'a> {
         self.logger
             .info(&format!("Found {} partitions in MBR", mbr_info.part_count));
 
+        let download_list = self.prepare_partition_download_list(packer, &mbr_info, options)?;
+
+        let ubifs_config = UbifsConfig::new(&*self.logger);
+        ubifs_config.execute(ctx, &mut *packer, &download_list, StorageType::from(storage_type))?;
+
         let mbr_download = MbrDownload::new(&*self.logger);
         mbr_download.execute(ctx, &mbr_data).await?;
 
         self.logger.complete_stage();
 
-        let download_list = self.prepare_partition_download_list(packer, &mbr_info, options)?;
         if !download_list.is_empty() {
             self.logger.begin_stage(StageType::FesPartitions);
 
