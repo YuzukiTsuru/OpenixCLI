@@ -1,20 +1,31 @@
+//! DRAM initialization handler
+//!
+//! Handles DRAM initialization for Allwinner devices in FEL mode
+
 use crate::config::boot_header::Boot0Header;
 use crate::config::sys_config::DramParamInfo;
 use crate::utils::{FlashError, FlashResult, Logger};
 use std::time::Duration;
 
+/// Interval between DRAM initialization checks
 const DRAM_INIT_CHECK_INTERVAL: Duration = Duration::from_millis(1000);
+/// Maximum time to wait for DRAM initialization
 const DRAM_INIT_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// DRAM initialization handler
 pub struct DramInit<'a> {
     logger: &'a Logger,
 }
 
 impl<'a> DramInit<'a> {
+    /// Create a new DRAM initialization handler
     pub fn new(logger: &'a Logger) -> Self {
         Self { logger }
     }
 
+    /// Execute DRAM initialization
+    ///
+    /// Downloads FES (Flash Eraser Script) to device and initializes DRAM
     pub async fn execute(&self, ctx: &mut libefex::Context, fes_data: &[u8]) -> FlashResult<()> {
         self.logger.info("Initializing DRAM...");
 
@@ -60,6 +71,7 @@ impl<'a> DramInit<'a> {
         Ok(())
     }
 
+    /// Wait for DRAM initialization to complete
     async fn wait_for_dram_init(
         &self,
         ctx: &mut libefex::Context,

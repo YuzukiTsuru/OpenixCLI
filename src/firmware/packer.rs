@@ -1,3 +1,7 @@
+//! Firmware packer implementation
+//!
+//! Provides functionality for loading and parsing Allwinner firmware files (.fex)
+
 #![allow(dead_code)]
 
 use crate::firmware::types::*;
@@ -5,8 +9,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
+/// Suffix appended to partition download file names
 const PARTITION_DOWNLOADFILE_SUFFIX: &str = "0000000000";
 
+/// Errors that can occur during firmware packing/unpacking
 #[derive(Debug, thiserror::Error)]
 pub enum PackerError {
     #[error("IO error: {0}")]
@@ -25,6 +31,9 @@ pub enum PackerError {
     ParseError(&'static str),
 }
 
+/// Firmware packer for Allwinner IMAGEWTY format
+///
+/// Provides methods to load and extract files from firmware images
 pub struct OpenixPacker {
     file: Option<File>,
     image_header: Option<ImageHeader>,
@@ -34,6 +43,7 @@ pub struct OpenixPacker {
 }
 
 impl OpenixPacker {
+    /// Create a new empty packer
     pub fn new() -> Self {
         Self {
             file: None,
@@ -44,6 +54,13 @@ impl OpenixPacker {
         }
     }
 
+    /// Load firmware from file path
+    ///
+    /// # Arguments
+    /// * `path` - Path to the firmware file
+    ///
+    /// # Returns
+    /// Ok(()) on success, PackerError on failure
     pub fn load<P: AsRef<Path>>(&mut self, path: P) -> Result<(), PackerError> {
         let mut file = File::open(path)?;
 
@@ -85,14 +102,17 @@ impl OpenixPacker {
         Ok(())
     }
 
+    /// Check if image is loaded
     pub fn is_image_loaded(&self) -> bool {
         self.image_loaded
     }
 
+    /// Check if firmware is encrypted
     pub fn is_encrypted(&self) -> bool {
         self.is_encrypted
     }
 
+    /// Get image information
     pub fn get_image_info(&self) -> ImageInfo {
         let header = match self.image_header {
             Some(ref h) => *h,
@@ -146,6 +166,7 @@ impl OpenixPacker {
         }
     }
 
+    /// Get header version
     fn get_header_version(&self) -> u32 {
         self.image_header
             .as_ref()
@@ -153,6 +174,7 @@ impl OpenixPacker {
             .unwrap_or(0)
     }
 
+    /// Get file header by filename
     pub fn get_file_header_by_filename(&self, filename: &str) -> Option<&FileHeader> {
         let header_version = self.get_header_version();
         self.file_headers
@@ -160,6 +182,7 @@ impl OpenixPacker {
             .find(|fh| fh.filename_str(header_version) == filename)
     }
 
+    /// Get file header by main type and sub type
     pub fn get_file_header_by_maintype_subtype(
         &self,
         maintype: &str,
@@ -170,6 +193,7 @@ impl OpenixPacker {
             .find(|fh| fh.maintype_str() == maintype && fh.subtype_str() == subtype)
     }
 
+    /// Get file data by filename
     pub fn get_file_data_by_filename(&mut self, filename: &str) -> Result<Vec<u8>, PackerError> {
         if !self.image_loaded {
             return Err(PackerError::ImageNotLoaded);
@@ -186,6 +210,7 @@ impl OpenixPacker {
         )
     }
 
+    /// Get file data by main type and sub type
     pub fn get_file_data_by_maintype_subtype(
         &mut self,
         maintype: &str,
@@ -206,6 +231,7 @@ impl OpenixPacker {
         )
     }
 
+    /// Get file info by main type and sub type
     pub fn get_file_info_by_maintype_subtype(
         &self,
         maintype: &str,
@@ -223,6 +249,7 @@ impl OpenixPacker {
         ))
     }
 
+    /// Get file info by filename
     pub fn get_file_info_by_filename(&self, filename: &str) -> Option<(u64, u64)> {
         if !self.image_loaded {
             return None;
@@ -236,6 +263,7 @@ impl OpenixPacker {
         ))
     }
 
+    /// Read data at specified offset
     fn read_data_at_offset(&mut self, offset: u32, length: u32) -> Result<Vec<u8>, PackerError> {
         let file = self.file.as_mut().ok_or(PackerError::ImageNotLoaded)?;
 
@@ -247,6 +275,7 @@ impl OpenixPacker {
         Ok(buffer)
     }
 
+    /// Get file data range by main type and sub type
     pub fn get_file_data_range_by_maintype_subtype(
         &mut self,
         maintype: &str,
@@ -277,6 +306,7 @@ impl OpenixPacker {
         )
     }
 
+    /// Build subtype from partition name
     pub fn build_subtype_by_filename(&self, partition_name: &str) -> String {
         let suffix = format!(
             "{}{}",
@@ -290,6 +320,7 @@ impl OpenixPacker {
         }
     }
 
+    /// Get image data by predefined name
     pub fn get_image_data_by_name(&mut self, name: &str) -> Result<Vec<u8>, PackerError> {
         if let Some(entry) = crate::firmware::image_data::get_image_data_entry(name) {
             self.get_file_data_by_maintype_subtype(entry.maintype, entry.subtype)
@@ -298,26 +329,32 @@ impl OpenixPacker {
         }
     }
 
+    /// Get FES (Flash Eraser Script) data
     pub fn get_fes(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("fes")
     }
 
+    /// Get U-Boot data
     pub fn get_uboot(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("uboot")
     }
 
+    /// Get MBR (Master Boot Record) data
     pub fn get_mbr(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("mbr")
     }
 
+    /// Get DTB (Device Tree Blob) data
     pub fn get_dtb(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("dtb")
     }
 
+    /// Get system configuration binary data
     pub fn get_sys_config_bin(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("sys_config_bin")
     }
 
+    /// Get board configuration data
     pub fn get_board_config(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("board_config")
     }

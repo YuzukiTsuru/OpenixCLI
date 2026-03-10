@@ -1,3 +1,7 @@
+//! Process tracking modules
+//!
+//! Provides progress tracking and reporting functionality for the flashing process
+
 pub mod global_progress;
 pub mod reporter;
 pub mod stages;

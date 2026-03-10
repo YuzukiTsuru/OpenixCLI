@@ -1,5 +1,19 @@
+//! FES handler type definitions
+//!
+//! Provides types and structures used by FES handler
+
+/// Item type for root filesystem FAT16 partition
 pub const ITEM_ROOTFSFAT16: &str = "RFSFAT16";
 
+/// Information about a partition to be downloaded
+///
+/// # Fields
+/// * `partition_name` - Name of the partition
+/// * `partition_address` - Starting address on storage
+/// * `download_filename` - Filename in firmware
+/// * `download_subtype` - Subtype for firmware lookup
+/// * `data_offset` - Offset in firmware file
+/// * `data_length` - Size of partition data
 #[derive(Debug, Clone)]
 pub struct PartitionDownloadInfo {
     pub partition_name: String,
@@ -10,12 +24,16 @@ pub struct PartitionDownloadInfo {
     pub data_length: u64,
 }
 
+/// Incremental checksum calculator
+///
+/// Calculates 32-bit incremental checksum for data verification
 pub struct IncrementalChecksum {
     sum: u32,
     pending_bytes: Vec<u8>,
 }
 
 impl IncrementalChecksum {
+    /// Create a new checksum calculator
     pub fn new() -> Self {
         IncrementalChecksum {
             sum: 0,
@@ -23,6 +41,9 @@ impl IncrementalChecksum {
         }
     }
 
+    /// Update checksum with more data
+    ///
+    /// Processes data in 4-byte aligned chunks
     pub fn update(&mut self, data: &[u8]) {
         let buffer = if !self.pending_bytes.is_empty() {
             let mut combined = self.pending_bytes.clone();
@@ -47,6 +68,9 @@ impl IncrementalChecksum {
         }
     }
 
+    /// Finalize and return the checksum
+    ///
+    /// Processes any remaining bytes and returns the final checksum
     pub fn finalize(&mut self) -> u32 {
         if !self.pending_bytes.is_empty() {
             let last_value: u32 = match self.pending_bytes.len() {

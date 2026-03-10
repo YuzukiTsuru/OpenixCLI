@@ -1,3 +1,7 @@
+//! Raw partition downloader
+//!
+//! Handles downloading raw (non-sparse) partition data to device storage
+
 use super::super::constants;
 use super::super::types::{IncrementalChecksum, PartitionDownloadInfo, ITEM_ROOTFSFAT16};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
@@ -7,6 +11,10 @@ use libefex::FesDataType;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+/// Raw partition downloader
+///
+/// Downloads raw partition data in chunks with progress reporting
+/// and optional checksum verification
 pub struct RawDownloader<'a> {
     logger: &'a Logger,
     written_bytes: Arc<AtomicU64>,
@@ -14,6 +22,7 @@ pub struct RawDownloader<'a> {
 }
 
 impl<'a> RawDownloader<'a> {
+    /// Create a new raw downloader
     pub fn new(
         logger: &'a Logger,
         written_bytes: Arc<AtomicU64>,
@@ -26,6 +35,9 @@ impl<'a> RawDownloader<'a> {
         }
     }
 
+    /// Execute raw partition download
+    ///
+    /// Downloads partition data in chunks with progress tracking
     pub async fn execute(
         &self,
         ctx: &libefex::Context,
@@ -105,6 +117,7 @@ impl<'a> RawDownloader<'a> {
         Ok(())
     }
 
+    /// Verify partition after download
     async fn verify_partition(
         &self,
         ctx: &libefex::Context,

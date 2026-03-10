@@ -1,33 +1,49 @@
+//! Command-line interface definitions
+//!
+//! Defines the CLI structure using clap for argument parsing
+
 use clap::{Parser, Subcommand};
 
+/// Main CLI structure
+///
+/// # Fields
+/// * `command` - The subcommand to execute (scan or flash)
+/// * `verbose` - Enable verbose output
 #[derive(Parser)]
 #[command(name = "openixcli")]
 #[command(about = "Firmware flashing CLI tool for Allwinner chips", long_about = None)]
 #[command(version)]
 pub struct Cli {
+    /// The subcommand to execute
     #[command(subcommand)]
     pub command: Commands,
 
+    /// Enable verbose output
     #[arg(short, long, global = true, help = "Enable verbose output")]
     pub verbose: bool,
 }
 
+/// Available CLI commands
 #[derive(Subcommand)]
 pub enum Commands {
-    #[command(about = "Scan for connected devices")]
+    /// Scan for connected devices
     Scan,
 
-    #[command(about = "Flash firmware to device")]
+    /// Flash firmware to device
     Flash {
+        /// Path to firmware file
         #[arg(help = "Path to firmware file")]
         firmware: String,
 
+        /// USB bus number
         #[arg(short, long, help = "USB bus number")]
         bus: Option<u8>,
 
+        /// USB port number
         #[arg(short = 'P', long, help = "USB port number")]
         port: Option<u8>,
 
+        /// Enable verification after write
         #[arg(
             short = 'V',
             long,
@@ -36,6 +52,11 @@ pub enum Commands {
         )]
         verify: bool,
 
+        /// Flash mode
+        /// - partition: Flash only specified partitions
+        /// - keep_data: Keep existing data
+        /// - partition_erase: Erase partitions before flashing
+        /// - full_erase: Erase all data before flashing
         #[arg(
             short,
             long,
@@ -44,9 +65,14 @@ pub enum Commands {
         )]
         mode: String,
 
+        /// Partitions to flash (comma-separated)
         #[arg(short = 'p', long, help = "Partitions to flash (comma-separated)")]
         partitions: Option<String>,
 
+        /// Post-flash action
+        /// - reboot: Reboot device after flashing
+        /// - poweroff: Power off device after flashing
+        /// - shutdown: Shutdown device after flashing
         #[arg(
             short = 'a',
             long,

@@ -1,6 +1,21 @@
+//! Command type definitions
+//!
+//! Defines types and structures used by CLI commands
+
 use std::path::PathBuf;
 use std::str::FromStr;
 
+/// Arguments for the flash command
+///
+/// # Fields
+/// * `firmware_path` - Path to the firmware file
+/// * `bus` - USB bus number (optional)
+/// * `port` - USB port number (optional)
+/// * `verify` - Enable verification after write
+/// * `mode` - Flash mode
+/// * `partitions` - Specific partitions to flash (optional)
+/// * `post_action` - Action to perform after flashing
+/// * `verbose` - Enable verbose output
 pub struct FlashArgs {
     pub firmware_path: PathBuf,
     pub bus: Option<u8>,
@@ -12,6 +27,13 @@ pub struct FlashArgs {
     pub verbose: bool,
 }
 
+/// Flash mode options
+///
+/// # Variants
+/// * `Partition` - Flash only specified partitions
+/// * `KeepData` - Keep existing data
+/// * `PartitionErase` - Erase partitions before flashing
+/// * `FullErase` - Erase all data before flashing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlashMode {
     Partition,

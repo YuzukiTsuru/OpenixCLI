@@ -1,5 +1,20 @@
+//! Partition configuration parser
+//!
+//! Provides parsers for partition configuration files in INI-like format
+
 #![allow(dead_code)]
 
+/// Partition configuration entry
+///
+/// # Fields
+/// * `name` - Partition name
+/// * `size` - Partition size in bytes
+/// * `downloadfile` - File to download to this partition
+/// * `user_type` - User type identifier
+/// * `keydata` - Contains key data
+/// * `encrypt` - Should be encrypted
+/// * `verify` - Should be verified after write
+/// * `readonly` - Read-only partition
 #[derive(Debug, Clone, Default)]
 pub struct PartitionConfig {
     pub name: String,
@@ -12,22 +27,26 @@ pub struct PartitionConfig {
     pub readonly: bool,
 }
 
+/// Partition configuration container
 pub struct OpenixPartition {
     partitions: Vec<PartitionConfig>,
 }
 
 impl OpenixPartition {
+    /// Create a new empty partition configuration
     pub fn new() -> Self {
         Self {
             partitions: Vec::new(),
         }
     }
 
+    /// Parse partition configuration from binary data
     pub fn parse_from_data(&mut self, data: &[u8]) -> bool {
         let content = String::from_utf8_lossy(data);
         self.parse_from_content(&content)
     }
 
+    /// Parse partition configuration from string content
     fn parse_from_content(&mut self, content: &str) -> bool {
         self.partitions.clear();
 
@@ -74,6 +93,7 @@ impl OpenixPartition {
         true
     }
 
+    /// Parse a single partition configuration line
     fn parse_partition_line(&self, line: &str, partition: &mut PartitionConfig) {
         let parts: Vec<&str> = line.splitn(2, '=').collect();
         if parts.len() != 2 {
@@ -109,10 +129,12 @@ impl OpenixPartition {
         }
     }
 
+    /// Get all partitions
     pub fn get_partitions(&self) -> &[PartitionConfig] {
         &self.partitions
     }
 
+    /// Get partition by name
     pub fn get_partition_by_name(&self, name: &str) -> Option<&PartitionConfig> {
         self.partitions.iter().find(|p| p.name == name)
     }

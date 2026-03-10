@@ -1,3 +1,8 @@
+//! Sparse partition downloader
+//!
+//! Handles downloading sparse partition data to device storage
+//! Sparse format is a compressed format used by Android system images
+
 use super::super::constants;
 use super::super::types::PartitionDownloadInfo;
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
@@ -12,6 +17,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+/// Sparse partition downloader
+///
+/// Downloads sparse format partition data with chunk parsing
+/// and optional checksum verification
 pub struct SparseDownloader<'a> {
     logger: &'a Logger,
     written_bytes: Arc<AtomicU64>,
@@ -19,6 +28,7 @@ pub struct SparseDownloader<'a> {
 }
 
 impl<'a> SparseDownloader<'a> {
+    /// Create a new sparse downloader
     pub fn new(
         logger: &'a Logger,
         written_bytes: Arc<AtomicU64>,
@@ -31,6 +41,9 @@ impl<'a> SparseDownloader<'a> {
         }
     }
 
+    /// Execute sparse partition download
+    ///
+    /// Reads partition data and downloads using sparse format parser
     pub async fn execute(
         &self,
         ctx: &libefex::Context,
@@ -87,6 +100,9 @@ impl<'a> SparseDownloader<'a> {
         Ok(())
     }
 
+    /// Download sparse data from a reader
+    ///
+    /// Parses sparse format and downloads chunks to device
     async fn download_sparse_from_reader<R: Read + Seek>(
         &self,
         ctx: &libefex::Context,
@@ -213,6 +229,7 @@ impl<'a> SparseDownloader<'a> {
     }
 }
 
+/// Parameters for sparse download operation
 struct SparseDownloadParams<'a> {
     data_offset: u64,
     data_length: u64,
@@ -221,6 +238,9 @@ struct SparseDownloadParams<'a> {
     verify_enabled: bool,
 }
 
+/// Sparse format parser
+///
+/// Parses sparse image format chunks and downloads them to device
 struct SparseParser<'a> {
     state: ParseState,
     last_chunk_type: LastChunkType,
@@ -240,6 +260,7 @@ struct SparseParser<'a> {
 }
 
 impl<'a> SparseParser<'a> {
+    /// Create a new sparse parser
     pub fn new(
         block_size: u32,
         start_sector: u32,
@@ -267,22 +288,29 @@ impl<'a> SparseParser<'a> {
         }
     }
 
+    /// Get current checksum
     pub fn checksum(&self) -> u32 {
         self.checksum
     }
 
+    /// Get raw data info for verification
     pub fn rawdata_info(&self) -> (u32, u64) {
         (self.rawdata_start_sector, self.rawdata_size)
     }
 
+    /// Check if verification is needed
     pub fn need_verify(&self) -> bool {
         self.verify_enabled && self.last_chunk_type == LastChunkType::Raw && self.rawdata_size > 0
     }
 
+    /// Get total bytes written
     pub fn total_written(&self) -> u64 {
         self.total_written
     }
 
+    /// Parse and download sparse chunks
+    ///
+    /// Processes buffer data and downloads chunks to device
     pub async fn parse_and_download(
         &mut self,
         ctx: &libefex::Context,
@@ -482,6 +510,7 @@ impl<'a> SparseParser<'a> {
         Ok(())
     }
 
+    /// Save remaining data for next iteration
     fn save_rest_data(&mut self, buffer: &[u8], offset: usize, rest_size: usize) {
         self.last_rest_size = rest_size;
         if rest_size > 0 {
@@ -489,6 +518,7 @@ impl<'a> SparseParser<'a> {
         }
     }
 
+    /// Download data to device
     fn download_data(
         &mut self,
         ctx: &libefex::Context,
@@ -532,6 +562,7 @@ impl<'a> SparseParser<'a> {
         Ok(())
     }
 
+    /// Process fill chunk (write repeated pattern)
     fn process_fill_chunk(&mut self, ctx: &libefex::Context, fill_value: u32) -> FlashResult<()> {
         use crate::firmware::sparse::{MAX_FILL_COUNT, SECTOR_SIZE};
 
@@ -571,6 +602,7 @@ impl<'a> SparseParser<'a> {
         Ok(())
     }
 
+    /// Verify last RAW chunk
     async fn verify_last_chunk(&mut self, ctx: &libefex::Context) -> FlashResult<()> {
         if self.rawdata_size == 0 {
             return Ok(());

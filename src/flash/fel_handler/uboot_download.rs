@@ -1,19 +1,34 @@
+//! U-Boot download handler
+//!
+//! Handles downloading U-Boot and related configurations to device memory
+
 use crate::config::boot_header::{UBootHeader, WORK_MODE_USB_PRODUCT};
 use crate::utils::{FlashError, FlashResult, Logger};
 
+/// Maximum U-Boot size (2 MB)
 const UBOOT_MAX_LEN: usize = 2 * 1024 * 1024;
+/// Maximum DTB size (1 MB)
 const DTB_MAX_LEN: usize = 1024 * 1024;
+/// Maximum sys_config.bin size (512 KB)
 const SYS_CONFIG_BIN00_MAX_LEN: usize = 512 * 1024;
 
+/// U-Boot download handler
+///
+/// Downloads U-Boot image, DTB, sys_config, and board_config to device memory
 pub struct UbootDownload<'a> {
     logger: &'a Logger,
 }
 
 impl<'a> UbootDownload<'a> {
+    /// Create a new U-Boot download handler
     pub fn new(logger: &'a Logger) -> Self {
         Self { logger }
     }
 
+    /// Execute U-Boot download
+    ///
+    /// Downloads U-Boot image with work mode set to USB product mode,
+    /// then downloads DTB, sys_config, and board_config to appropriate memory locations
     pub async fn execute(
         &self,
         ctx: &libefex::Context,
@@ -64,6 +79,9 @@ impl<'a> UbootDownload<'a> {
         Ok(())
     }
 
+    /// Write DTB (Device Tree Blob) to device memory
+    ///
+    /// DTB is placed after U-Boot in memory
     fn write_dtb(
         &self,
         ctx: &libefex::Context,
@@ -83,6 +101,9 @@ impl<'a> UbootDownload<'a> {
         Ok(())
     }
 
+    /// Write system configuration to device memory
+    ///
+    /// SysConfig is placed after DTB in memory
     fn write_sysconfig(
         &self,
         ctx: &libefex::Context,
@@ -101,6 +122,9 @@ impl<'a> UbootDownload<'a> {
         Ok(())
     }
 
+    /// Write board configuration to device memory
+    ///
+    /// BoardConfig is placed after sys_config in memory
     fn write_board_config(
         &self,
         ctx: &libefex::Context,

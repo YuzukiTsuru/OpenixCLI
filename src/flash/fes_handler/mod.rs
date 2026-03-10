@@ -1,3 +1,8 @@
+//! FES (Flash Eraser Script) handler
+//!
+//! Handles FES mode operations for devices in U-Boot mode
+//! FES mode is used for flashing partitions and boot images to storage
+
 mod boot_download;
 mod constants;
 mod erase_flag;
@@ -20,15 +25,28 @@ use crate::flash::FlashMode;
 use crate::process::StageType;
 use crate::utils::{FlashError, FlashResult, Logger};
 
+/// FES handler for devices in U-Boot mode
+///
+/// Handles partition flashing, MBR writing, and boot image downloading
+/// for devices that are in FES mode (U-Boot)
 pub struct FesHandler<'a> {
     logger: &'a mut Logger,
 }
 
 impl<'a> FesHandler<'a> {
+    /// Create a new FES handler
     pub fn new(logger: &'a mut Logger) -> Self {
         Self { logger }
     }
 
+    /// Handle FES mode operations
+    ///
+    /// Executes the full flashing process:
+    /// 1. Query device information (boot mode, storage type, flash size)
+    /// 2. Erase flash if required
+    /// 3. Download MBR
+    /// 4. Download partitions
+    /// 5. Download boot images
     pub async fn handle(
         &mut self,
         ctx: &libefex::Context,
@@ -83,7 +101,12 @@ impl<'a> FesHandler<'a> {
         let download_list = self.prepare_partition_download_list(packer, &mbr_info, options)?;
 
         let ubifs_config = UbifsConfig::new(&*self.logger);
-        ubifs_config.execute(ctx, &mut *packer, &download_list, StorageType::from(storage_type))?;
+        ubifs_config.execute(
+            ctx,
+            &mut *packer,
+            &download_list,
+            StorageType::from(storage_type),
+        )?;
 
         let mbr_download = MbrDownload::new(&*self.logger);
         mbr_download.execute(ctx, &mbr_data).await?;
@@ -116,6 +139,9 @@ impl<'a> FesHandler<'a> {
         Ok(())
     }
 
+    /// Prepare the list of partitions to download
+    ///
+    /// Filters partitions based on flash mode and user-specified partition list
     fn prepare_partition_download_list(
         &self,
         packer: &mut OpenixPacker,

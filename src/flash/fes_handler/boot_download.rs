@@ -1,18 +1,30 @@
+//! Boot image download handler
+//!
+//! Handles downloading Boot0 and Boot1 images to device storage
+
 use crate::config::boot_header::{BOOT_FILE_MODE_NORMAL, BOOT_FILE_MODE_PKG, BOOT_FILE_MODE_TOC};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::{OpenixPacker, PackerError, StorageType};
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
 
+/// Boot image download handler
+///
+/// Downloads Boot0 and Boot1 images to device storage based on
+/// the boot mode and storage type
 pub struct BootDownload<'a> {
     logger: &'a Logger,
 }
 
 impl<'a> BootDownload<'a> {
+    /// Create a new boot download handler
     pub fn new(logger: &'a Logger) -> Self {
         Self { logger }
     }
 
+    /// Execute boot image download
+    ///
+    /// Downloads both Boot1 and Boot0 images to device
     pub async fn execute(
         &self,
         ctx: &libefex::Context,
@@ -31,6 +43,9 @@ impl<'a> BootDownload<'a> {
         Ok(())
     }
 
+    /// Download Boot1 image
+    ///
+    /// Boot1 is the secondary boot loader
     async fn download_boot1(
         &self,
         ctx: &libefex::Context,
@@ -71,6 +86,9 @@ impl<'a> BootDownload<'a> {
         Ok(())
     }
 
+    /// Download Boot0 image
+    ///
+    /// Boot0 is the primary boot loader stored in storage
     async fn download_boot0(
         &self,
         ctx: &libefex::Context,
@@ -113,6 +131,7 @@ impl<'a> BootDownload<'a> {
         Ok(())
     }
 
+    /// Get Boot1 subtype based on boot mode and storage type
     fn get_boot1_subtype(
         &self,
         secure: u32,
@@ -132,6 +151,7 @@ impl<'a> BootDownload<'a> {
         }
     }
 
+    /// Get Boot0 subtype based on boot mode and storage type
     fn get_boot0_subtype(
         &self,
         secure: u32,

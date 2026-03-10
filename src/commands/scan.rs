@@ -1,6 +1,16 @@
+//! Scan command implementation
+//!
+//! Scans for connected Allwinner devices via USB
+
 use colored::Colorize;
 use libefex::{Context, DeviceMode};
 
+/// Execute the scan command
+///
+/// Scans for USB devices and displays information about connected Allwinner devices
+///
+/// # Returns
+/// Ok(()) on success, Error on failure
 pub async fn execute() -> anyhow::Result<()> {
     println!("{}", "Scanning USB devices...".cyan().bold());
     println!();

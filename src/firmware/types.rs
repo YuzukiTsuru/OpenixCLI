@@ -1,12 +1,23 @@
+//! Firmware type definitions
+//!
+//! Defines structures for parsing Allwinner firmware file formats
+
 #![allow(dead_code)]
 
+/// Magic string for IMAGEWTY firmware format
 pub const IMAGEWTY_MAGIC: &str = "IMAGEWTY";
+/// Length of magic string
 pub const IMAGEWTY_MAGIC_LEN: usize = 8;
+/// File header length
 pub const IMAGEWTY_FILEHDR_LEN: usize = 1024;
+/// Main type field length in file header
 pub const IMAGEWTY_FHDR_MAINTYPE_LEN: usize = 8;
+/// Sub type field length in file header
 pub const IMAGEWTY_FHDR_SUBTYPE_LEN: usize = 16;
+/// Filename field length in file header
 pub const IMAGEWTY_FHDR_FILENAME_LEN: usize = 256;
 
+/// Image header version 1 structure
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct ImageHeaderV1 {
@@ -24,6 +35,7 @@ pub struct ImageHeaderV1 {
     pub val0_4: u32,
 }
 
+/// Image header version 3 structure
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct ImageHeaderV3 {
@@ -42,6 +54,7 @@ pub struct ImageHeaderV3 {
     pub val0_4: u32,
 }
 
+/// Union for different header versions
 #[repr(C, packed)]
 pub union ImageHeaderVersionData {
     pub v1: ImageHeaderV1,
@@ -62,6 +75,9 @@ impl std::fmt::Debug for ImageHeaderVersionData {
     }
 }
 
+/// Main image header structure
+///
+/// Contains metadata about the firmware image
 #[repr(C, packed)]
 pub struct ImageHeader {
     pub magic: [u8; IMAGEWTY_MAGIC_LEN],
@@ -103,6 +119,7 @@ impl std::fmt::Debug for ImageHeader {
 }
 
 impl ImageHeader {
+    /// Parse image header from raw data
     pub fn parse(data: &[u8]) -> Result<&Self, &'static str> {
         if data.len() < std::mem::size_of::<ImageHeader>() {
             return Err("Data too short for ImageHeader");
@@ -112,6 +129,7 @@ impl ImageHeader {
         Ok(unsafe { &*ptr })
     }
 
+    /// Parse image header from mutable raw data
     pub fn parse_mut(data: &mut [u8]) -> Result<&mut Self, &'static str> {
         if data.len() < std::mem::size_of::<ImageHeader>() {
             return Err("Data too short for ImageHeader");
@@ -121,10 +139,12 @@ impl ImageHeader {
         Ok(unsafe { &mut *ptr })
     }
 
+    /// Get magic string from header
     pub fn magic_str(&self) -> String {
         String::from_utf8_lossy(&self.magic).to_string()
     }
 
+    /// Get number of files in the image
     pub fn num_files(&self) -> u32 {
         unsafe {
             if self.header_version == 0x0300 {
@@ -135,6 +155,7 @@ impl ImageHeader {
         }
     }
 
+    /// Get product ID
     pub fn pid(&self) -> u32 {
         unsafe {
             if self.header_version == 0x0300 {
@@ -145,6 +166,7 @@ impl ImageHeader {
         }
     }
 
+    /// Get vendor ID
     pub fn vid(&self) -> u32 {
         unsafe {
             if self.header_version == 0x0300 {
@@ -155,6 +177,7 @@ impl ImageHeader {
         }
     }
 
+    /// Get hardware ID
     pub fn hardware_id(&self) -> u32 {
         unsafe {
             if self.header_version == 0x0300 {
@@ -165,6 +188,7 @@ impl ImageHeader {
         }
     }
 
+    /// Get firmware ID
     pub fn firmware_id(&self) -> u32 {
         unsafe {
             if self.header_version == 0x0300 {
@@ -176,6 +200,7 @@ impl ImageHeader {
     }
 }
 
+/// File header version 1 structure
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileHeaderV1 {
@@ -187,6 +212,7 @@ pub struct FileHeaderV1 {
     pub filename: [u8; IMAGEWTY_FHDR_FILENAME_LEN],
 }
 
+/// File header version 3 structure
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileHeaderV3 {
@@ -199,6 +225,7 @@ pub struct FileHeaderV3 {
     pub offset: u32,
 }
 
+/// Union for different file header versions
 #[repr(C, packed)]
 pub union FileHeaderVersionData {
     pub v1: FileHeaderV1,
@@ -219,6 +246,9 @@ impl std::fmt::Debug for FileHeaderVersionData {
     }
 }
 
+/// File header structure
+///
+/// Contains metadata about a single file in the firmware image
 #[repr(C, packed)]
 pub struct FileHeader {
     pub filename_len: u32,
@@ -250,6 +280,7 @@ impl std::fmt::Debug for FileHeader {
 }
 
 impl FileHeader {
+    /// Parse file header from raw data
     pub fn parse(data: &[u8]) -> Result<&Self, &'static str> {
         if data.len() < std::mem::size_of::<FileHeader>() {
             return Err("Data too short for FileHeader");
@@ -259,6 +290,7 @@ impl FileHeader {
         Ok(unsafe { &*ptr })
     }
 
+    /// Parse file header from mutable raw data
     pub fn parse_mut(data: &mut [u8]) -> Result<&mut Self, &'static str> {
         if data.len() < std::mem::size_of::<FileHeader>() {
             return Err("Data too short for FileHeader");
@@ -268,16 +300,19 @@ impl FileHeader {
         Ok(unsafe { &mut *ptr })
     }
 
+    /// Get main type as string
     pub fn maintype_str(&self) -> String {
         let s = String::from_utf8_lossy(&self.maintype).to_string();
         s.trim_end_matches(['\0', ' ']).to_string()
     }
 
+    /// Get sub type as string
     pub fn subtype_str(&self) -> String {
         let s = String::from_utf8_lossy(&self.subtype).to_string();
         s.trim_end_matches(['\0', ' ']).to_string()
     }
 
+    /// Get stored length (compressed size)
     pub fn stored_length(&self, header_version: u32) -> u32 {
         unsafe {
             if header_version == 0x0300 {
@@ -288,6 +323,7 @@ impl FileHeader {
         }
     }
 
+    /// Get original length (uncompressed size)
     pub fn original_length(&self, header_version: u32) -> u32 {
         unsafe {
             if header_version == 0x0300 {
@@ -298,6 +334,7 @@ impl FileHeader {
         }
     }
 
+    /// Get offset in the firmware file
     pub fn offset(&self, header_version: u32) -> u32 {
         unsafe {
             if header_version == 0x0300 {
@@ -308,6 +345,7 @@ impl FileHeader {
         }
     }
 
+    /// Get filename as string
     pub fn filename_str(&self, header_version: u32) -> String {
         unsafe {
             let filename_bytes = if header_version == 0x0300 {
@@ -324,6 +362,7 @@ impl FileHeader {
     }
 }
 
+/// Image information container
 #[derive(Debug, Clone)]
 pub struct ImageInfo {
     pub header: ImageHeader,
@@ -333,6 +372,7 @@ pub struct ImageInfo {
     pub num_files: u32,
 }
 
+/// File information structure
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub filename: String,
@@ -343,17 +383,30 @@ pub struct FileInfo {
     pub offset: u32,
 }
 
+/// Storage type enumeration
+///
+/// Represents different types of storage devices supported by Allwinner chips
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageType {
+    /// NAND flash
     Nand = 0,
+    /// SD card
     Sdcard = 1,
+    /// eMMC
     Emmc = 2,
+    /// SPI NOR flash
     Spinor = 3,
+    /// eMMC v3
     Emmc3 = 4,
+    /// SPI NAND flash
     Spinand = 5,
+    /// SD card slot 1
     Sd1 = 6,
+    /// eMMC slot 0
     Emmc0 = 7,
+    /// UFS
     Ufs = 8,
+    /// Auto-detect
     Auto = -1,
 }
 

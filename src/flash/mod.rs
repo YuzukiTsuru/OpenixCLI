@@ -1,3 +1,8 @@
+//! Flash module
+//!
+//! Provides flash functionality for writing firmware to Allwinner devices
+//! Supports both FEL mode (USB boot) and FES mode (U-Boot)
+
 #![allow(dead_code)]
 
 pub mod fel_handler;
@@ -10,6 +15,13 @@ use crate::firmware::OpenixPacker;
 use crate::process::{FlashStages, StageType};
 use crate::utils::{FlashError, FlashResult, Logger};
 
+/// Flash mode options
+///
+/// # Variants
+/// * `Partition` - Flash only specified partitions
+/// * `KeepData` - Keep existing data
+/// * `PartitionErase` - Erase partitions before flashing
+/// * `FullErase` - Erase all data before flashing
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FlashMode {
     Partition,
@@ -19,6 +31,7 @@ pub enum FlashMode {
 }
 
 impl FlashMode {
+    /// Get erase flag for this mode
     pub fn erase_flag(&self) -> u32 {
         match self {
             FlashMode::Partition => 0x0,
@@ -29,6 +42,15 @@ impl FlashMode {
     }
 }
 
+/// Flash options configuration
+///
+/// # Fields
+/// * `bus` - USB bus number (optional)
+/// * `port` - USB port number (optional)
+/// * `verify` - Enable verification after write
+/// * `mode` - Flash mode
+/// * `partitions` - Specific partitions to flash (optional)
+/// * `post_action` - Action after flashing
 #[derive(Debug, Clone)]
 pub struct FlashOptions {
     pub bus: Option<u8>,
@@ -39,6 +61,10 @@ pub struct FlashOptions {
     pub post_action: String,
 }
 
+/// Main flash controller
+///
+/// Coordinates the flashing process including FEL initialization,
+/// FES handling, and partition flashing
 pub struct Flasher {
     packer: OpenixPacker,
     options: FlashOptions,
@@ -46,6 +72,7 @@ pub struct Flasher {
 }
 
 impl Flasher {
+    /// Create a new flasher instance
     pub fn new(packer: OpenixPacker, options: FlashOptions, logger: Logger) -> Self {
         Self {
             packer,
@@ -54,6 +81,10 @@ impl Flasher {
         }
     }
 
+    /// Execute the flash process
+    ///
+    /// This is the main entry point for the flashing process.
+    /// It handles both FEL and FES mode devices.
     pub async fn execute(&mut self) -> FlashResult<()> {
         let fes_data = self.packer.get_fes().map_err(|_| FlashError::FesNotFound)?;
 
@@ -161,6 +192,7 @@ impl Flasher {
         Ok(())
     }
 
+    /// Reconnect to device after FEL mode operations
     async fn reconnect_device(&self) -> FlashResult<libefex::Context> {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
@@ -211,6 +243,7 @@ impl Flasher {
         Err(FlashError::ReconnectFailed)
     }
 
+    /// Set device mode after flashing
     async fn set_device_mode(&self, ctx: &libefex::Context) -> FlashResult<()> {
         let tool_mode = match self.options.post_action.as_str() {
             "reboot" => libefex::FesToolMode::Reboot,

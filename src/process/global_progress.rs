@@ -1,36 +1,58 @@
+//! Global progress tracking for flash operations
+//!
+//! Provides progress bar and stage tracking functionality using indicatif crate
+
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Global MultiProgress instance for managing multiple progress bars
 static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(|| Arc::new(MultiProgress::new()));
 
+/// Get a clone of the global MultiProgress instance
 pub fn multi_progress() -> Arc<MultiProgress> {
     Arc::clone(&MULTI_PROGRESS)
 }
 
+/// Global progress tracker instance
 static GLOBAL_PROGRESS: Lazy<Arc<GlobalProgress>> = Lazy::new(|| Arc::new(GlobalProgress::new()));
 
+/// Get a clone of the global progress tracker
 pub fn global_progress() -> Arc<GlobalProgress> {
     Arc::clone(&GLOBAL_PROGRESS)
 }
 
+/// Flash operation stage types
+///
+/// Represents different stages of the firmware flashing process
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageType {
+    /// Initial stage
     Init,
+    /// FEL mode DRAM initialization
     FelDram,
+    /// FEL mode U-Boot download
     FelUboot,
+    /// Device reconnection after FEL mode
     FelReconnect,
+    /// FES mode device query
     FesQuery,
+    /// Flash erasure
     FesErase,
+    /// MBR (Master Boot Record) writing
     FesMbr,
+    /// Partition flashing
     FesPartitions,
+    /// Boot image writing
     FesBoot,
+    /// Setting device mode
     FesMode,
 }
 
 impl StageType {
+    /// Get human-readable name for the stage
     pub fn name(&self) -> &'static str {
         match self {
             StageType::Init => "Initializing",
@@ -47,6 +69,9 @@ impl StageType {
     }
 }
 
+/// Global progress tracker
+///
+/// Manages progress bars and tracks the completion of flash operation stages
 pub struct GlobalProgress {
     progress_bar: Mutex<Option<ProgressBar>>,
     total_weight: AtomicU64,
@@ -64,6 +89,7 @@ pub struct GlobalProgress {
     precise_progress: Mutex<f64>,
 }
 
+/// Stage information for progress tracking
 #[derive(Debug, Clone)]
 pub struct StageInfo {
     pub stage_type: StageType,
@@ -73,6 +99,7 @@ pub struct StageInfo {
 }
 
 impl GlobalProgress {
+    /// Create a new global progress tracker
     pub fn new() -> Self {
         Self {
             progress_bar: Mutex::new(None),
@@ -92,6 +119,9 @@ impl GlobalProgress {
         }
     }
 
+    /// Define the stages for the flash operation
+    ///
+    /// Sets up the progress stages with their respective weights (percentages)
     pub fn define_stages(&self, stage_types: &[StageType]) {
         let mut stages = self.stages.lock().unwrap();
         stages.clear();
@@ -124,12 +154,14 @@ impl GlobalProgress {
         self.current_stage.store(0, Ordering::SeqCst);
     }
 
+    /// Set the weight for partition flashing stage based on total bytes
     pub fn set_partition_stage_weight(&self, total_bytes: u64) {
         let current = self.current_stage.load(Ordering::SeqCst);
         let mut stages = self.stages.lock().unwrap();
 
         if current < stages.len() && stages[current].stage_type == StageType::FesPartitions {
-            let completed_weight: u64 = stages.iter()
+            let completed_weight: u64 = stages
+                .iter()
                 .filter(|s| s.completed)
                 .map(|s| s.weight)
                 .sum();
@@ -137,13 +169,15 @@ impl GlobalProgress {
             stages[current].weight = 80;
             stages[current].sub_total = total_bytes;
 
-            self.completed_weight.store(completed_weight, Ordering::SeqCst);
+            self.completed_weight
+                .store(completed_weight, Ordering::SeqCst);
             self.total_bytes.store(total_bytes, Ordering::SeqCst);
             self.stage_progress.store(0, Ordering::SeqCst);
             self.global_written_bytes.store(0, Ordering::SeqCst);
         }
     }
 
+    /// Start the global progress tracking
     pub fn start(&self) {
         if self.started.swap(1, Ordering::SeqCst) == 1 {
             return;
@@ -167,6 +201,7 @@ impl GlobalProgress {
         *self.last_update_time.lock().unwrap() = Some(Instant::now());
     }
 
+    /// Start a specific stage
     pub fn start_stage(&self, stage_type: StageType) {
         let stages = self.stages.lock().unwrap();
         if let Some(pos) = stages.iter().position(|s| s.stage_type == stage_type) {
@@ -177,11 +212,13 @@ impl GlobalProgress {
         }
     }
 
+    /// Set the current partition name for display
     pub fn set_current_partition(&self, partition_name: &str) {
         let mut partition = self.current_partition.lock().unwrap();
         *partition = partition_name.to_string();
     }
 
+    /// Update stage progress (0-100 percentage)
     pub fn update_stage_progress(&self, progress: u64) {
         let current = self.current_stage.load(Ordering::SeqCst);
         let stages = self.stages.lock().unwrap();
@@ -210,6 +247,7 @@ impl GlobalProgress {
         }
     }
 
+    /// Update stage progress with speed calculation
     pub fn update_stage_progress_with_speed(&self, progress: u64) {
         let now = Instant::now();
         let mut last_time = self.last_update_time.lock().unwrap();
@@ -235,6 +273,7 @@ impl GlobalProgress {
         self.update_progress_message();
     }
 
+    /// Update the progress message with speed and transfer info
     pub fn update_progress_message(&self) {
         let partition = self.current_partition.lock().unwrap();
         let speed = *self.current_speed.lock().unwrap();
@@ -268,6 +307,7 @@ impl GlobalProgress {
         }
     }
 
+    /// Mark the current stage as completed
     pub fn complete_stage(&self) {
         let current = self.current_stage.load(Ordering::SeqCst);
         let mut stages = self.stages.lock().unwrap();
@@ -284,12 +324,14 @@ impl GlobalProgress {
         }
     }
 
+    /// Update the progress bar message
     pub fn update_message(&self, message: &str) {
         if let Some(pb) = self.progress_bar.lock().unwrap().as_ref() {
             pb.set_message(message.to_string());
         }
     }
 
+    /// Finish the progress tracking
     pub fn finish(&self) {
         if self.started.swap(0, Ordering::SeqCst) == 0 {
             return;
@@ -312,6 +354,7 @@ impl GlobalProgress {
         stages.clear();
     }
 
+    /// Get current progress percentage (0-100)
     pub fn get_progress(&self) -> u8 {
         let completed = self.completed_weight.load(Ordering::SeqCst);
         let total = self.total_weight.load(Ordering::SeqCst).max(1);

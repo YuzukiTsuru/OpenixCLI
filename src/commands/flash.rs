@@ -1,11 +1,25 @@
+//! Flash command implementation
+
 use crate::commands::FlashArgs;
 use crate::flash::{FlashMode, FlashOptions, Flasher};
 use crate::utils::logger::Logger;
 
+/// Execute the flash command
+///
+/// Loads firmware from the specified path and flashes it to the device
+///
+/// # Arguments
+/// * `args` - Flash arguments including firmware path, device selection, and flash options
+///
+/// # Returns
+/// Ok(()) on success, Error on failure
 pub async fn execute(args: FlashArgs) -> anyhow::Result<()> {
     let logger = Logger::with_verbose(args.verbose);
 
-    logger.info(&format!("Loading firmware: {}", args.firmware_path.display()));
+    logger.info(&format!(
+        "Loading firmware: {}",
+        args.firmware_path.display()
+    ));
 
     if !args.firmware_path.exists() {
         logger.error(&format!(

@@ -1,14 +1,28 @@
+//! MBR (Master Boot Record) parser
+//!
+//! Provides parsers for Allwinner MBR partition table format
+
 #![allow(dead_code)]
 
+/// MBR magic string
 pub const MBR_MAGIC: &str = "softw411";
+/// MBR version
 pub const MBR_VERSION: u32 = 0x00000200;
+/// MBR size in bytes (16KB)
 pub const MBR_SIZE: usize = 16 * 1024;
+/// Maximum partition name length
 pub const PART_NAME_MAX_LEN: usize = 16;
+/// Reserved size in partition entry
 pub const PART_SIZE_RES_LEN: usize = 68;
+/// Maximum number of partitions supported
 pub const MBR_MAX_PART_CNT: usize = 120;
 
+/// CRC32 valid flag
 pub const EFEX_CRC32_VALID_FLAG: u32 = 0x6a617603;
 
+/// Raw partition entry structure
+///
+/// Represents a single partition entry in the MBR
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct SunxiPartitionRaw {
@@ -24,9 +38,11 @@ pub struct SunxiPartitionRaw {
     pub reserved: [u8; PART_SIZE_RES_LEN],
 }
 
+/// Size of a partition entry
 pub const SUNXI_PARTITION_SIZE: usize = std::mem::size_of::<SunxiPartitionRaw>();
 
 impl SunxiPartitionRaw {
+    /// Parse partition entry from raw data
     pub fn parse(data: &[u8]) -> Result<&Self, &'static str> {
         if data.len() < SUNXI_PARTITION_SIZE {
             return Err("Data too short for Sunxi partition");
@@ -36,31 +52,37 @@ impl SunxiPartitionRaw {
         Ok(unsafe { &*ptr })
     }
 
+    /// Get class name as string
     pub fn classname_str(&self) -> String {
         String::from_utf8_lossy(&self.classname)
             .trim_end_matches('\0')
             .to_string()
     }
 
+    /// Get partition name as string
     pub fn name_str(&self) -> String {
         String::from_utf8_lossy(&self.name)
             .trim_end_matches('\0')
             .to_string()
     }
 
+    /// Get partition starting address
     pub fn address(&self) -> u64 {
         ((self.addrhi as u64) << 32) | (self.addrlo as u64)
     }
 
+    /// Get partition size
     pub fn length(&self) -> u64 {
         ((self.lenhi as u64) << 32) | (self.lenlo as u64)
     }
 
+    /// Check if partition is read-only
     pub fn readonly(&self) -> bool {
         self.ro != 0
     }
 }
 
+/// Parsed partition entry
 #[derive(Debug, Clone)]
 pub struct SunxiPartition {
     pub addrhi: u32,
@@ -75,6 +97,7 @@ pub struct SunxiPartition {
 }
 
 impl SunxiPartition {
+    /// Create from raw partition entry
     pub fn from_raw(raw: &SunxiPartitionRaw) -> Self {
         Self {
             addrhi: raw.addrhi,
@@ -89,19 +112,23 @@ impl SunxiPartition {
         }
     }
 
+    /// Get partition starting address
     pub fn address(&self) -> u64 {
         ((self.addrhi as u64) << 32) | (self.addrlo as u64)
     }
 
+    /// Get partition size
     pub fn length(&self) -> u64 {
         ((self.lenhi as u64) << 32) | (self.lenlo as u64)
     }
 
+    /// Check if partition is read-only
     pub fn readonly(&self) -> bool {
         self.ro != 0
     }
 }
 
+/// Raw MBR structure
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct SunxiMbrRaw {
@@ -116,6 +143,7 @@ pub struct SunxiMbrRaw {
 }
 
 impl SunxiMbrRaw {
+    /// Parse MBR from raw data
     pub fn parse(data: &[u8]) -> Result<&Self, &'static str> {
         if data.len() < MBR_SIZE {
             return Err("Data too short for Sunxi MBR");
@@ -132,11 +160,13 @@ impl SunxiMbrRaw {
         Ok(mbr)
     }
 
+    /// Get magic string
     pub fn magic_str(&self) -> String {
         String::from_utf8_lossy(&self.magic).to_string()
     }
 }
 
+/// Parsed MBR structure
 #[derive(Debug, Clone)]
 pub struct SunxiMbr {
     pub crc32: u32,
@@ -150,6 +180,7 @@ pub struct SunxiMbr {
 }
 
 impl SunxiMbr {
+    /// Parse MBR from raw data
     pub fn parse(data: &[u8]) -> Result<Self, &'static str> {
         let raw = SunxiMbrRaw::parse(data)?;
 
@@ -171,6 +202,7 @@ impl SunxiMbr {
         })
     }
 
+    /// Convert to MbrInfo
     pub fn to_mbr_info(&self) -> MbrInfo {
         MbrInfo {
             part_count: self.part_count,
@@ -179,12 +211,14 @@ impl SunxiMbr {
     }
 }
 
+/// MBR information container
 #[derive(Debug, Clone)]
 pub struct MbrInfo {
     pub part_count: u32,
     pub partitions: Vec<SunxiPartition>,
 }
 
+/// Check if data contains a valid MBR
 pub fn is_valid_mbr(data: &[u8]) -> bool {
     if data.len() < std::mem::size_of::<SunxiMbrRaw>() {
         return false;

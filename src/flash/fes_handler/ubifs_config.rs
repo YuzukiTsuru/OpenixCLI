@@ -1,20 +1,35 @@
+//! UBIFS configuration handler
+//!
+//! Handles UBIFS (UBI File System) configuration for NAND partitions
+
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
 
+/// UBIFS node magic number
 const UBIFS_NODE_MAGIC: u32 = 0x06101831;
+/// Buffer size for UBIFS checking
 const UBIFS_CHECK_BUFFER_SIZE: usize = 4096;
 
+/// Partitions to skip during UBIFS configuration
 const SKIP_PARTITIONS: [&str; 3] = ["UDISK", "sysrecovery", "private"];
 
+/// UBIFS configuration handler
+///
+/// Detects UBIFS partitions and configures them for NAND storage
 pub struct UbifsConfig<'a> {
     logger: &'a Logger,
 }
 
 impl<'a> UbifsConfig<'a> {
+    /// Create a new UBIFS config handler
     pub fn new(logger: &'a Logger) -> Self {
         Self { logger }
     }
 
+    /// Execute UBIFS configuration
+    ///
+    /// Checks partitions for UBIFS magic and configures them if found
+    /// Returns early after first UBIFS partition is found
     pub fn execute(
         &self,
         ctx: &libefex::Context,
@@ -53,8 +68,10 @@ impl<'a> UbifsConfig<'a> {
                 ctx.fes_down(&buffer, 0, FesDataType::Ext4Ubifs)
                     .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-                self.logger
-                    .info(&format!("UBIFS config set for partition {}", partition_name));
+                self.logger.info(&format!(
+                    "UBIFS config set for partition {}",
+                    partition_name
+                ));
                 return Ok(UbifsConfigResult::Configured {
                     partition_name: partition_name.clone(),
                 });
@@ -65,6 +82,7 @@ impl<'a> UbifsConfig<'a> {
         Ok(UbifsConfigResult::NotFound)
     }
 
+    /// Check if partition should be skipped
     fn should_skip_partition(partition_name: &str) -> bool {
         let upper_name = partition_name.to_uppercase();
         SKIP_PARTITIONS
@@ -72,6 +90,7 @@ impl<'a> UbifsConfig<'a> {
             .any(|skip| upper_name.starts_with(skip))
     }
 
+    /// Check if partition data starts with UBIFS magic
     fn check_ubifs_magic(
         &self,
         packer: &mut crate::firmware::OpenixPacker,
@@ -85,12 +104,7 @@ impl<'a> UbifsConfig<'a> {
                 4,
             )
             .or_else(|_| {
-                packer.get_file_data_range_by_maintype_subtype(
-                    "12345678",
-                    download_subtype,
-                    0,
-                    4,
-                )
+                packer.get_file_data_range_by_maintype_subtype("12345678", download_subtype, 0, 4)
             });
 
         match data {
@@ -103,9 +117,13 @@ impl<'a> UbifsConfig<'a> {
     }
 }
 
+/// Result of UBIFS configuration operation
 #[derive(Debug, Clone)]
 pub enum UbifsConfigResult {
+    /// Skipped (e.g., SD card storage)
     Skipped,
+    /// No UBIFS partitions found
     NotFound,
+    /// UBIFS configured for a partition
     Configured { partition_name: String },
 }

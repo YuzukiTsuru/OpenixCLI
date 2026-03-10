@@ -1,3 +1,8 @@
+//! Partition download implementation
+//!
+//! Handles the main partition download logic, including format detection
+//! and delegation to appropriate downloaders (raw or sparse)
+
 use super::super::types::{PartitionDownloadInfo, ITEM_ROOTFSFAT16};
 use super::raw_download::RawDownloader;
 use super::sparse_parser::SparseDownloader;
@@ -7,6 +12,10 @@ use crate::utils::{FlashError, FlashResult, Logger};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+/// Partition download handler
+///
+/// Coordinates downloading of all partitions, automatically detecting
+/// whether each partition uses raw or sparse format
 pub struct PartitionDownload<'a> {
     logger: &'a mut Logger,
     written_bytes: Arc<AtomicU64>,
@@ -14,6 +23,7 @@ pub struct PartitionDownload<'a> {
 }
 
 impl<'a> PartitionDownload<'a> {
+    /// Create a new partition download handler
     pub fn new(logger: &'a mut Logger) -> Self {
         Self {
             logger,
@@ -22,6 +32,9 @@ impl<'a> PartitionDownload<'a> {
         }
     }
 
+    /// Execute partition download
+    ///
+    /// Downloads all partitions in the download list
     pub async fn execute(
         &mut self,
         ctx: &libefex::Context,
@@ -70,6 +83,9 @@ impl<'a> PartitionDownload<'a> {
         Ok(())
     }
 
+    /// Download a single partition
+    ///
+    /// Detects whether the partition is in sparse or raw format
     async fn download_single_partition(
         &mut self,
         ctx: &libefex::Context,
@@ -118,6 +134,7 @@ impl<'a> PartitionDownload<'a> {
         Ok(())
     }
 
+    /// Download partition in sparse format
     async fn download_sparse_partition(
         &mut self,
         ctx: &libefex::Context,
@@ -133,6 +150,7 @@ impl<'a> PartitionDownload<'a> {
         downloader.execute(ctx, packer, info, verify).await
     }
 
+    /// Download partition in raw format
     async fn download_raw_partition(
         &mut self,
         ctx: &libefex::Context,

@@ -1,7 +1,38 @@
+//! Error handling module
+//!
+//! Provides error types and result types for flash operations
+
 #![allow(dead_code)]
 
 use thiserror::Error;
 
+/// Flash operation errors
+///
+/// # Variants
+/// * `FirmwareNotFound` - Firmware file not found
+/// * `InvalidFirmwareFormat` - Invalid firmware format
+/// * `EncryptedNotSupported` - Encrypted firmware not supported
+/// * `DeviceNotFound` - No device found
+/// * `DeviceOpenFailed` - Failed to open device
+/// * `DramInitFailed` - DRAM initialization failed
+/// * `UbootDownloadFailed` - U-Boot download failed
+/// * `MbrDownloadFailed` - MBR download failed
+/// * `PartitionDownloadFailed` - Partition download failed
+/// * `ReconnectFailed` - Device reconnect failed
+/// * `StorageTypeMismatch` - Storage type mismatch
+/// * `FesNotFound` - FES not found in firmware
+/// * `UbootNotFound` - U-Boot not found in firmware
+/// * `SysConfigNotFound` - SysConfig not found in firmware
+/// * `MbrNotFound` - MBR not found in firmware
+/// * `Boot0NotFound` - Boot0 not found in firmware
+/// * `Boot1NotFound` - Boot1 not found in firmware
+/// * `UsbTransferError` - USB transfer error
+/// * `Cancelled` - Operation cancelled
+/// * `Timeout` - Operation timeout
+/// * `Io` - IO error
+/// * `Packer` - Packer error
+/// * `Libefex` - Libefex error
+/// * `Unknown` - Unknown error
 #[derive(Debug, Error)]
 pub enum FlashError {
     #[error("Firmware file not found: {0}")]
@@ -77,4 +108,5 @@ pub enum FlashError {
     Unknown(String),
 }
 
+/// Result type for flash operations
 pub type FlashResult<T> = Result<T, FlashError>;
