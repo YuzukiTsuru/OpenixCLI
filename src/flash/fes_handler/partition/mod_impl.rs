@@ -46,26 +46,6 @@ impl<'a> PartitionDownload<'a> {
         self.written_bytes.store(0, Ordering::SeqCst);
         self.last_speed_update.store(0, Ordering::SeqCst);
 
-        let result = self
-            .download_partitions_inner(ctx, packer, download_list, verify)
-            .await;
-
-        self.logger.info("Turning off flash access...");
-        if let Err(e) = ctx.fes_flash_set_onoff(0, false) {
-            self.logger
-                .warn(&format!("Failed to turn off flash access: {}", e));
-        }
-
-        result
-    }
-
-    async fn download_partitions_inner(
-        &mut self,
-        ctx: &libefex::Context,
-        packer: &mut OpenixPacker,
-        download_list: &[PartitionDownloadInfo],
-        verify: bool,
-    ) -> FlashResult<()> {
         for info in download_list {
             self.logger.info(&format!(
                 "Flashing partition: {} ({} bytes at sector {})",
@@ -74,6 +54,12 @@ impl<'a> PartitionDownload<'a> {
 
             self.download_single_partition(ctx, packer, info, verify)
                 .await?;
+        }
+
+        self.logger.info("Turning off flash access...");
+        if let Err(e) = ctx.fes_flash_set_onoff(0, false) {
+            self.logger
+                .warn(&format!("Failed to turn off flash access: {}", e));
         }
 
         let written = self.written_bytes.load(Ordering::SeqCst);

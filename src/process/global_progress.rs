@@ -61,6 +61,7 @@ pub struct GlobalProgress {
     last_update_time: Mutex<Option<Instant>>,
     last_update_bytes: AtomicU64,
     current_speed: Mutex<f64>,
+    precise_progress: Mutex<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +88,7 @@ impl GlobalProgress {
             last_update_time: Mutex::new(None),
             last_update_bytes: AtomicU64::new(0),
             current_speed: Mutex::new(0.0),
+            precise_progress: Mutex::new(0.0),
         }
     }
 
@@ -94,36 +96,30 @@ impl GlobalProgress {
         let mut stages = self.stages.lock().unwrap();
         stages.clear();
 
-        let has_fel_stages = stage_types.iter().any(|s| {
-            matches!(
-                s,
-                StageType::FelDram | StageType::FelUboot | StageType::FelReconnect
-            )
-        });
-
-        let mut total = 0u64;
+        let mut cumulative_percent = 0u64;
         for stage_type in stage_types {
-            let weight = if has_fel_stages {
-                match stage_type {
-                    StageType::FelDram => 3,
-                    StageType::FelUboot => 4,
-                    StageType::FelReconnect => 3,
-                    StageType::FesPartitions => 0,
-                    _ => 0,
-                }
-            } else {
-                0
+            let end_percent = match stage_type {
+                StageType::Init => 3,
+                StageType::FelDram => 5,
+                StageType::FelUboot => 8,
+                StageType::FelReconnect => 10,
+                StageType::FesQuery => 12,
+                StageType::FesErase => 14,
+                StageType::FesMbr => 20,
+                StageType::FesPartitions => 100,
+                StageType::FesBoot => 100,
+                StageType::FesMode => 100,
             };
-            total += weight;
             stages.push(StageInfo {
                 stage_type: *stage_type,
-                weight,
+                weight: end_percent - cumulative_percent,
                 completed: false,
                 sub_total: 0,
             });
+            cumulative_percent = end_percent;
         }
 
-        self.total_weight.store(total.max(1), Ordering::SeqCst);
+        self.total_weight.store(100, Ordering::SeqCst);
         self.completed_weight.store(0, Ordering::SeqCst);
         self.current_stage.store(0, Ordering::SeqCst);
     }
@@ -133,21 +129,15 @@ impl GlobalProgress {
         let mut stages = self.stages.lock().unwrap();
 
         if current < stages.len() && stages[current].stage_type == StageType::FesPartitions {
-            let has_fel_stages = stages.iter().any(|s| {
-                matches!(
-                    s.stage_type,
-                    StageType::FelDram | StageType::FelUboot | StageType::FelReconnect
-                )
-            });
+            let completed_weight: u64 = stages.iter()
+                .filter(|s| s.completed)
+                .map(|s| s.weight)
+                .sum();
 
-            let partition_weight = if has_fel_stages { 90 } else { 100 };
-
-            stages[current].weight = partition_weight;
+            stages[current].weight = 80;
             stages[current].sub_total = total_bytes;
 
-            let total: u64 = stages.iter().map(|s| s.weight).sum();
-
-            self.total_weight.store(total.max(1), Ordering::SeqCst);
+            self.completed_weight.store(completed_weight, Ordering::SeqCst);
             self.total_bytes.store(total_bytes, Ordering::SeqCst);
             self.stage_progress.store(0, Ordering::SeqCst);
             self.global_written_bytes.store(0, Ordering::SeqCst);
@@ -167,7 +157,7 @@ impl GlobalProgress {
                     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>3}% {msg}",
                 )
                 .unwrap()
-                .progress_chars("█▓▒░ "),
+                .progress_chars("#>-"),
         );
         pb.enable_steady_tick(Duration::from_millis(100));
 
@@ -204,21 +194,19 @@ impl GlobalProgress {
         let stage_weight = stage.weight;
         let sub_total = stage.sub_total.max(1);
 
+        let completed_weight = self.completed_weight.load(Ordering::SeqCst);
+
         drop(stages);
 
         let stage_percent = (progress as f64 / sub_total as f64).min(1.0);
-        let stage_contribution = (stage_percent * stage_weight as f64) as u64;
+        let percent = completed_weight as f64 + stage_percent * stage_weight as f64;
 
-        let completed = self.completed_weight.load(Ordering::SeqCst);
-        let total = self.total_weight.load(Ordering::SeqCst).max(1);
-
-        let overall = completed + stage_contribution;
-        let percent = ((overall as f64 / total as f64) * 100.0) as u64;
+        *self.precise_progress.lock().unwrap() = percent;
 
         self.stage_progress.store(progress, Ordering::SeqCst);
 
         if let Some(pb) = self.progress_bar.lock().unwrap().as_ref() {
-            pb.set_position(percent.min(100));
+            pb.set_position(percent.min(100.0) as u64);
         }
     }
 
@@ -289,12 +277,9 @@ impl GlobalProgress {
             let weight = stages[current].weight;
 
             let completed = self.completed_weight.fetch_add(weight, Ordering::SeqCst) + weight;
-            let total = self.total_weight.load(Ordering::SeqCst).max(1);
-
-            let percent = ((completed as f64 / total as f64) * 100.0) as u64;
 
             if let Some(pb) = self.progress_bar.lock().unwrap().as_ref() {
-                pb.set_position(percent.min(100));
+                pb.set_position(completed.min(100));
             }
         }
     }
