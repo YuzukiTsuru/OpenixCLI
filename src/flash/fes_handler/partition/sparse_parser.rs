@@ -467,7 +467,7 @@ impl<'a> SparseParser<'a> {
                     offset += 4;
                     this_rest_size -= 4;
 
-                    self.logger.info(&format!(
+                    self.logger.debug(&format!(
                         "Downloading FILL chunk at sector 0x{:x}, size {} bytes, fill value 0x{:x}",
                         self.flash_sector, self.chunk_length, fill_value
                     ));

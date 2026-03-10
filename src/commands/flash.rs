@@ -66,7 +66,10 @@ pub async fn execute(
     };
 
     let mut flasher = Flasher::new(packer, options, logger.clone());
-    flasher.execute().await?;
+    if let Err(e) = flasher.execute().await {
+        logger.error(&format!("Flash failed: {}", e));
+        return Err(anyhow::anyhow!("{}", e));
+    }
 
     println!();
     logger.stage_complete("All partitions flashed successfully");
