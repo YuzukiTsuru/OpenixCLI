@@ -98,7 +98,8 @@ impl Flasher {
         self.logger.start_global_progress();
 
         self.logger.begin_stage(StageType::Init);
-        self.logger.info(&format!("FES data loaded ({} bytes)", fes_data.len()));
+        self.logger
+            .info(&format!("FES data loaded ({} bytes)", fes_data.len()));
         self.logger.complete_stage();
 
         if has_fel {

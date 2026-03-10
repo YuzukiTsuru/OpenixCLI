@@ -72,7 +72,8 @@ impl<'a> PartitionDownload<'a> {
                 info.partition_name, info.data_length, info.partition_address
             ));
 
-            self.download_single_partition(ctx, packer, info, verify).await?;
+            self.download_single_partition(ctx, packer, info, verify)
+                .await?;
         }
 
         let written = self.written_bytes.load(Ordering::SeqCst);
@@ -121,9 +122,11 @@ impl<'a> PartitionDownload<'a> {
                 "Partition {} is in sparse format",
                 info.partition_name
             ));
-            self.download_sparse_partition(ctx, packer, info, verify).await?;
+            self.download_sparse_partition(ctx, packer, info, verify)
+                .await?;
         } else {
-            self.download_raw_partition(ctx, packer, info, verify).await?;
+            self.download_raw_partition(ctx, packer, info, verify)
+                .await?;
         }
 
         Ok(())

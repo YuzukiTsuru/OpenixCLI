@@ -86,9 +86,10 @@ impl<'a> RawDownloader<'a> {
             ctx.fes_down_with_progress(&chunk_data, chunk_start_sector, FesDataType::Flash, {
                 let logger = self.logger;
                 move |transferred, _total| {
-                    let current = written_bytes.fetch_add(transferred, Ordering::SeqCst) + transferred;
+                    let current =
+                        written_bytes.fetch_add(transferred, Ordering::SeqCst) + transferred;
                     let last = last_speed_update.load(Ordering::SeqCst);
-                    
+
                     if current.saturating_sub(last) >= constants::SPEED_UPDATE_INTERVAL {
                         last_speed_update.store(current, Ordering::SeqCst);
                         logger.update_progress_with_speed(current);
