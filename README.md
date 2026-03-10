@@ -5,7 +5,7 @@
 
 A command-line & tui firmware flashing tool for Allwinner chips, written in Rust.
 
-<img width="1109" height="586" alt="image" src="https://github.com/user-attachments/assets/1afb1429-1fc3-49ac-8a2a-de67b664456a" />
+<img width="1090" height="583" alt="4610154f-10af-4016-afdd-cf5bdebb59e2" src="https://github.com/user-attachments/assets/39ae92c1-2ff7-45bf-95f8-361327f44ae6" />
 
 ## Overview
 
