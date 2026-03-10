@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use std::io::Write;
 use std::sync::Arc;
 
-static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(|| crate::process::multi_progress());
+static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(crate::process::multi_progress);
 
 static mut VERBOSE_MODE: bool = false;
 

@@ -84,7 +84,7 @@ impl<'a> RawDownloader<'a> {
             let last_speed_update = Arc::clone(&self.last_speed_update);
 
             ctx.fes_down_with_progress(&chunk_data, chunk_start_sector, FesDataType::Flash, {
-                let logger = &*self.logger;
+                let logger = self.logger;
                 move |transferred, _total| {
                     let current = written_bytes.fetch_add(transferred, Ordering::SeqCst) + transferred;
                     let last = last_speed_update.load(Ordering::SeqCst);
