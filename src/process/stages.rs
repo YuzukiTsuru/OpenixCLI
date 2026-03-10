@@ -6,9 +6,7 @@ pub struct FlashStages {
 
 impl FlashStages {
     pub fn new() -> Self {
-        Self {
-            stages: Vec::new(),
-        }
+        Self { stages: Vec::new() }
     }
 
     pub fn for_fel_mode() -> Self {

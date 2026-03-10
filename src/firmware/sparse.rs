@@ -96,9 +96,11 @@ pub fn is_sparse_format(data: &[u8]) -> bool {
 
 pub fn sparse_format_probe(data: &[u8]) -> crate::utils::FlashResult<SparseHeader> {
     use crate::utils::FlashError;
-    
+
     let header = SparseHeader::parse(data).ok_or_else(|| {
-        FlashError::InvalidFirmwareFormat("Failed to parse sparse header: insufficient data".to_string())
+        FlashError::InvalidFirmwareFormat(
+            "Failed to parse sparse header: insufficient data".to_string(),
+        )
     })?;
 
     let magic = header.magic;

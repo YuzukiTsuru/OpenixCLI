@@ -2,8 +2,8 @@ use super::super::constants;
 use super::super::types::PartitionDownloadInfo;
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::sparse::{
-    sparse_format_probe, ChunkHeader, LastChunkType, ParseState,
-    CHUNK_HEADER_SIZE, CHUNK_TYPE_DONT_CARE, CHUNK_TYPE_FILL, CHUNK_TYPE_RAW, SPARSE_HEADER_SIZE,
+    sparse_format_probe, ChunkHeader, LastChunkType, ParseState, CHUNK_HEADER_SIZE,
+    CHUNK_TYPE_DONT_CARE, CHUNK_TYPE_FILL, CHUNK_TYPE_RAW, SPARSE_HEADER_SIZE,
 };
 use crate::firmware::OpenixPacker;
 use crate::utils::{FlashError, FlashResult, Logger};
@@ -79,8 +79,10 @@ impl<'a> SparseDownloader<'a> {
         )
         .await?;
 
-        self.logger
-            .stage_complete(&format!("Partition {} flashed (sparse)", info.partition_name));
+        self.logger.stage_complete(&format!(
+            "Partition {} flashed (sparse)",
+            info.partition_name
+        ));
 
         Ok(())
     }
@@ -138,7 +140,9 @@ impl<'a> SparseDownloader<'a> {
             FlashError::InvalidFirmwareFormat(format!("Failed to read initial data: {}", e))
         })?;
 
-        parser.parse_and_download(ctx, &read_buf, first_read_size).await?;
+        parser
+            .parse_and_download(ctx, &read_buf, first_read_size)
+            .await?;
 
         let mut left_len = data_length as i64 - first_read_size as i64;
 
@@ -147,7 +151,9 @@ impl<'a> SparseDownloader<'a> {
                 FlashError::InvalidFirmwareFormat(format!("Failed to read data chunk: {}", e))
             })?;
 
-            parser.parse_and_download(ctx, &buffer, constants::BUFFER_SIZE).await?;
+            parser
+                .parse_and_download(ctx, &buffer, constants::BUFFER_SIZE)
+                .await?;
 
             left_len -= constants::BUFFER_SIZE as i64;
         }
@@ -159,7 +165,9 @@ impl<'a> SparseDownloader<'a> {
                 FlashError::InvalidFirmwareFormat(format!("Failed to read remaining data: {}", e))
             })?;
 
-            parser.parse_and_download(ctx, &remaining_buf, remaining).await?;
+            parser
+                .parse_and_download(ctx, &remaining_buf, remaining)
+                .await?;
         }
 
         if parser.need_verify() {
@@ -183,7 +191,8 @@ impl<'a> SparseDownloader<'a> {
                         partition_name, local_checksum, device_crc
                     ));
                 } else {
-                    self.logger.info(&format!("Partition {} verification passed", partition_name));
+                    self.logger
+                        .info(&format!("Partition {} verification passed", partition_name));
                 }
             } else {
                 self.logger.warn(&format!(
@@ -280,9 +289,7 @@ impl<'a> SparseParser<'a> {
         buffer: &[u8],
         length: usize,
     ) -> FlashResult<()> {
-        use crate::firmware::sparse::{
-            ALIGNMENT_SIZE, MIN_DOWNLOAD_SIZE, SECTOR_SIZE,
-        };
+        use crate::firmware::sparse::{ALIGNMENT_SIZE, MIN_DOWNLOAD_SIZE, SECTOR_SIZE};
 
         let combined_data: Vec<u8>;
         let work_buffer: &[u8];
@@ -321,7 +328,9 @@ impl<'a> SparseParser<'a> {
                     }
 
                     let chunk = ChunkHeader::parse(&work_buffer[offset..]).ok_or_else(|| {
-                        FlashError::InvalidFirmwareFormat("Failed to parse chunk header".to_string())
+                        FlashError::InvalidFirmwareFormat(
+                            "Failed to parse chunk header".to_string(),
+                        )
                     })?;
 
                     let chunk_type = chunk.chunk_type;
@@ -501,7 +510,7 @@ impl<'a> SparseParser<'a> {
             .fes_down_with_progress(data, sector, FesDataType::Flash, move |written, _total| {
                 let current = written_bytes.fetch_add(written, Ordering::SeqCst) + written;
                 let last = last_speed_update.load(Ordering::SeqCst);
-                
+
                 if current.saturating_sub(last) >= constants::SPEED_UPDATE_INTERVAL {
                     last_speed_update.store(current, Ordering::SeqCst);
                     logger.update_progress_with_speed(current);
@@ -521,11 +530,7 @@ impl<'a> SparseParser<'a> {
         Ok(())
     }
 
-    fn process_fill_chunk(
-        &mut self,
-        ctx: &libefex::Context,
-        fill_value: u32,
-    ) -> FlashResult<()> {
+    fn process_fill_chunk(&mut self, ctx: &libefex::Context, fill_value: u32) -> FlashResult<()> {
         use crate::firmware::sparse::{MAX_FILL_COUNT, SECTOR_SIZE};
 
         if self.chunk_length == 0 {

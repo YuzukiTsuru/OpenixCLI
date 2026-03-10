@@ -34,7 +34,7 @@ impl<'a> FesHandler<'a> {
         options: &crate::flash::FlashOptions,
     ) -> FlashResult<()> {
         self.logger.begin_stage(StageType::FesQuery);
-        
+
         let secure = ctx
             .fes_query_secure()
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
@@ -58,7 +58,7 @@ impl<'a> FesHandler<'a> {
             "Flash size: {} MB",
             (flash_size as u64) * 512 / 1024 / 1024
         ));
-        
+
         self.logger.complete_stage();
 
         if options.mode != FlashMode::Partition {
@@ -69,7 +69,7 @@ impl<'a> FesHandler<'a> {
         }
 
         self.logger.begin_stage(StageType::FesMbr);
-        
+
         let mbr_data = packer.get_mbr().map_err(|_| FlashError::MbrNotFound)?;
         let mbr = SunxiMbr::parse(&mbr_data)
             .map_err(|e| FlashError::InvalidFirmwareFormat(e.to_string()))?;
@@ -80,25 +80,25 @@ impl<'a> FesHandler<'a> {
 
         let mbr_download = MbrDownload::new(&*self.logger);
         mbr_download.execute(ctx, &mbr_data).await?;
-        
+
         self.logger.complete_stage();
 
         let download_list = self.prepare_partition_download_list(packer, &mbr_info, options)?;
         if !download_list.is_empty() {
             self.logger.begin_stage(StageType::FesPartitions);
-            
+
             let total_bytes: u64 = download_list.iter().map(|p| p.data_length).sum();
             self.logger.set_partition_stage_weight(total_bytes);
-            
+
             {
                 let mut partition_download = PartitionDownload::new(&mut *self.logger);
                 partition_download
                     .execute(ctx, packer, &download_list, options.verify)
                     .await?;
             }
-            
+
             self.logger.complete_stage();
-            
+
             self.logger.begin_stage(StageType::FesBoot);
             let boot_download = BootDownload::new(&*self.logger);
             boot_download
