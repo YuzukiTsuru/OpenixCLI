@@ -7,16 +7,16 @@ use clap::{Parser, Subcommand};
 /// Main CLI structure
 ///
 /// # Fields
-/// * `command` - The subcommand to execute (scan or flash)
+/// * `command` - The subcommand to execute (scan, flash, or tui). Defaults to TUI if none given.
 /// * `verbose` - Enable verbose output
 #[derive(Parser)]
 #[command(name = "openixcli")]
 #[command(about = "Firmware flashing CLI tool for Allwinner chips", long_about = None)]
 #[command(version)]
 pub struct Cli {
-    /// The subcommand to execute
+    /// The subcommand to execute (defaults to TUI if omitted)
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
     /// Enable verbose output
     #[arg(short, long, global = true, help = "Enable verbose output")]
@@ -81,4 +81,7 @@ pub enum Commands {
         )]
         post_action: String,
     },
+
+    /// Launch interactive TUI mode
+    Tui,
 }

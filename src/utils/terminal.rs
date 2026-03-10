@@ -9,7 +9,8 @@ use indicatif::MultiProgress;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::Lazy;
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 /// Global MultiProgress instance
 static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(crate::process::multi_progress);
@@ -27,6 +28,46 @@ pub fn set_verbose(verbose: bool) {
 /// Check if verbose mode is enabled
 pub fn is_verbose() -> bool {
     unsafe { VERBOSE_MODE }
+}
+
+/// TUI log message with level and text
+pub struct TuiLogMessage {
+    pub level: TuiLogLevel,
+    pub message: String,
+}
+
+/// Log level for TUI messages
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TuiLogLevel {
+    Info,
+    Success,
+    Warn,
+    Error,
+    Debug,
+}
+
+/// Global TUI log sender - when set, log output goes to this channel instead of stdout
+static TUI_LOG_SENDER: Lazy<Mutex<Option<mpsc::UnboundedSender<TuiLogMessage>>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Set the TUI log sender channel. When set, all log_* functions send to this channel.
+pub fn set_tui_log_sender(tx: Option<mpsc::UnboundedSender<TuiLogMessage>>) {
+    let mut sender = TUI_LOG_SENDER.lock().unwrap();
+    *sender = tx;
+}
+
+/// Send a log message to TUI channel if active, returns true if sent
+fn send_to_tui(level: TuiLogLevel, message: &str) -> bool {
+    let sender = TUI_LOG_SENDER.lock().unwrap();
+    if let Some(ref tx) = *sender {
+        let _ = tx.send(TuiLogMessage {
+            level,
+            message: message.to_string(),
+        });
+        true
+    } else {
+        false
+    }
 }
 
 /// Terminal logger
@@ -86,8 +127,21 @@ impl Log for TermLogger {
             return;
         }
 
-        let level_str = self.format_level(record.level());
         let message = record.args().to_string();
+
+        // In TUI mode, send to TUI channel
+        let tui_level = match record.level() {
+            Level::Error => TuiLogLevel::Error,
+            Level::Warn => TuiLogLevel::Warn,
+            Level::Info => TuiLogLevel::Info,
+            Level::Debug => TuiLogLevel::Debug,
+            Level::Trace => TuiLogLevel::Debug,
+        };
+        if send_to_tui(tui_level, &message) {
+            return;
+        }
+
+        let level_str = self.format_level(record.level());
 
         MULTI_PROGRESS.suspend(|| {
             if record.level() == Level::Error {
@@ -103,6 +157,9 @@ impl Log for TermLogger {
 
 /// Log an info message
 pub fn log_info(message: &str) {
+    if send_to_tui(TuiLogLevel::Info, message) {
+        return;
+    }
     MULTI_PROGRESS.suspend(|| {
         println!("[{}] {}", "INFO".cyan().bold(), message);
     });
@@ -110,6 +167,9 @@ pub fn log_info(message: &str) {
 
 /// Log a success message
 pub fn log_success(message: &str) {
+    if send_to_tui(TuiLogLevel::Success, message) {
+        return;
+    }
     MULTI_PROGRESS.suspend(|| {
         println!("[{}] {}", "OKAY".green().bold(), message);
     });
@@ -117,6 +177,9 @@ pub fn log_success(message: &str) {
 
 /// Log a warning message
 pub fn log_warn(message: &str) {
+    if send_to_tui(TuiLogLevel::Warn, message) {
+        return;
+    }
     MULTI_PROGRESS.suspend(|| {
         println!("[{}] {}", "WARN".yellow().bold(), message);
     });
@@ -124,6 +187,9 @@ pub fn log_warn(message: &str) {
 
 /// Log an error message
 pub fn log_error(message: &str) {
+    if send_to_tui(TuiLogLevel::Error, message) {
+        return;
+    }
     MULTI_PROGRESS.suspend(|| {
         eprintln!("[{}] {}", "ERRO".red().bold(), message);
     });
@@ -132,6 +198,9 @@ pub fn log_error(message: &str) {
 /// Log a debug message (only if verbose mode is enabled)
 pub fn log_debug(message: &str) {
     if is_verbose() {
+        if send_to_tui(TuiLogLevel::Debug, message) {
+            return;
+        }
         MULTI_PROGRESS.suspend(|| {
             println!("[{}] {}", "DEBG".blue().bold(), message);
         });

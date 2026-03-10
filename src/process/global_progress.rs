@@ -4,7 +4,7 @@
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,19 @@ static GLOBAL_PROGRESS: Lazy<Arc<GlobalProgress>> = Lazy::new(|| Arc::new(Global
 /// Get a clone of the global progress tracker
 pub fn global_progress() -> Arc<GlobalProgress> {
     Arc::clone(&GLOBAL_PROGRESS)
+}
+
+/// TUI mode flag - when true, skip creating indicatif progress bars
+static TUI_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Enable TUI mode (suppress indicatif progress bars)
+pub fn set_tui_mode(enabled: bool) {
+    TUI_MODE.store(enabled, Ordering::SeqCst);
+}
+
+/// Check if TUI mode is active
+pub fn is_tui_mode() -> bool {
+    TUI_MODE.load(Ordering::SeqCst)
 }
 
 /// Flash operation stage types
@@ -98,6 +111,17 @@ pub struct StageInfo {
     pub sub_total: u64,
 }
 
+/// Snapshot of progress state for TUI polling
+pub struct ProgressSnapshot {
+    pub precise_progress: f64,
+    pub stage_progress: u64,
+    pub total_bytes: u64,
+    pub speed: f64,
+    pub current_partition: String,
+    pub current_stage_index: usize,
+    pub stages: Vec<StageInfo>,
+}
+
 impl GlobalProgress {
     /// Create a new global progress tracker
     pub fn new() -> Self {
@@ -116,6 +140,24 @@ impl GlobalProgress {
             last_update_bytes: AtomicU64::new(0),
             current_speed: Mutex::new(0.0),
             precise_progress: Mutex::new(0.0),
+        }
+    }
+
+    /// Take a snapshot of current progress state (for TUI polling)
+    pub fn snapshot(&self) -> ProgressSnapshot {
+        let stages = self.stages.lock().unwrap().clone();
+        let partition = self.current_partition.lock().unwrap().clone();
+        let speed = *self.current_speed.lock().unwrap();
+        let precise = *self.precise_progress.lock().unwrap();
+
+        ProgressSnapshot {
+            precise_progress: precise,
+            stage_progress: self.stage_progress.load(Ordering::SeqCst),
+            total_bytes: self.total_bytes.load(Ordering::SeqCst),
+            speed,
+            current_partition: partition,
+            current_stage_index: self.current_stage.load(Ordering::SeqCst),
+            stages,
         }
     }
 
@@ -183,20 +225,23 @@ impl GlobalProgress {
             return;
         }
 
-        let mp = multi_progress();
-        let pb = mp.add(ProgressBar::new(100));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>3}% {msg}",
-                )
-                .unwrap()
-                .progress_chars("#>-"),
-        );
-        pb.enable_steady_tick(Duration::from_millis(100));
+        // In TUI mode, skip creating indicatif progress bar
+        if !is_tui_mode() {
+            let mp = multi_progress();
+            let pb = mp.add(ProgressBar::new(100));
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>3}% {msg}",
+                    )
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+            pb.enable_steady_tick(Duration::from_millis(100));
 
-        let mut progress_bar = self.progress_bar.lock().unwrap();
-        *progress_bar = Some(pb);
+            let mut progress_bar = self.progress_bar.lock().unwrap();
+            *progress_bar = Some(pb);
+        }
 
         *self.last_update_time.lock().unwrap() = Some(Instant::now());
     }
@@ -317,6 +362,9 @@ impl GlobalProgress {
             let weight = stages[current].weight;
 
             let completed = self.completed_weight.fetch_add(weight, Ordering::SeqCst) + weight;
+
+            // Update precise_progress for TUI
+            *self.precise_progress.lock().unwrap() = completed as f64;
 
             if let Some(pb) = self.progress_bar.lock().unwrap().as_ref() {
                 pb.set_position(completed.min(100));

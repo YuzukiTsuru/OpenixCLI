@@ -1,6 +1,6 @@
 [package]
 name = "openixcli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Tools for flash Allwinner Firmware to Devices."
 license = "MIT"
@@ -19,6 +19,8 @@ byteorder = "1.5"
 memmap2 = "0.9"
 chrono = "0.4"
 once_cell = "1.19"
+ratatui = "0.29"
+crossterm = "0.28"
 
 [dependencies.libefex]
 git = "https://github.com/YuzukiTsuru/libefex"
