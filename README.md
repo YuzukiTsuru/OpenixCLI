@@ -3,7 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 
-A command-line firmware flashing tool for Allwinner chips, written in Rust.
+A command-line & tui firmware flashing tool for Allwinner chips, written in Rust.
+
+<img width="1109" height="586" alt="image" src="https://github.com/user-attachments/assets/1afb1429-1fc3-49ac-8a2a-de67b664456a" />
 
 ## Overview
 
