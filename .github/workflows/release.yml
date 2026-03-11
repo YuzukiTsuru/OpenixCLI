@@ -66,8 +66,8 @@ jobs:
       - name: Create tarball
         run: |
           cd release
-          tar -czvf openixcli-${{ matrix.target }}.tar.gz openixcli
-          mv openixcli-${{ matrix.target }}.tar.gz ..
+          tar -czvf openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz openixcli
+          mv openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz ..
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
@@ -76,48 +76,22 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           cargo deb --target ${{ matrix.target }}
-          mv target/debian/openixcli_*.deb openixcli-${{ matrix.target }}.deb
+          mv target/debian/openixcli_*.deb openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.deb
 
       - name: Build RPM package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           node scripts/build-rpm.js ${{ matrix.target }} ${{ env.RELEASE_TAG }}
-
-      - name: Install appimage tools
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-
-      - name: Build AppImage
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          mkdir -p AppDir/usr/bin
-          cp target/${{ matrix.target }}/release/openixcli AppDir/usr/bin/
-          cat > AppDir/AppRun << 'EOF'
-          #!/bin/sh
-          exec "$APPDIR/usr/bin/openixcli" "$@"
-          EOF
-          chmod +x AppDir/AppRun
-          cat > AppDir/openixcli.desktop << 'EOF'
-          [Desktop Entry]
-          Name=OpenixCLI
-          Exec=openixcli
-          Type=Application
-          Categories=Utility;
-          EOF
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
-          mv OpenixCLI-*.AppImage openixcli-${{ matrix.target }}.AppImage || true
+          mv openixcli-${{ matrix.target }}.rpm openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.rpm
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.target }}
+          name: linux-${{ env.RELEASE_TAG }}-${{ matrix.target }}
           path: |
-            openixcli-${{ matrix.target }}.tar.gz
-            openixcli-${{ matrix.target }}.deb
-            openixcli-${{ matrix.target }}.rpm
-            openixcli-${{ matrix.target }}.AppImage
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.deb
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.rpm
 
   build-macos:
     name: Build macOS
@@ -157,22 +131,22 @@ jobs:
           mkdir -p release
           cp target/${{ matrix.target }}/release/openixcli release/
           cd release
-          tar -czvf openixcli-${{ matrix.target }}.tar.gz openixcli
-          mv openixcli-${{ matrix.target }}.tar.gz ..
+          tar -czvf openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz openixcli
+          mv openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz ..
 
       - name: Create DMG
         run: |
           mkdir -p dmg_temp
           cp target/${{ matrix.target }}/release/openixcli dmg_temp/
-          hdiutil create -volname "OpenixCLI" -srcfolder dmg_temp -ov -format UDZO openixcli-${{ matrix.target }}.dmg
+          hdiutil create -volname "OpenixCLI" -srcfolder dmg_temp -ov -format UDZO openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.dmg
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.target }}
+          name: macos-${{ env.RELEASE_TAG }}-${{ matrix.target }}
           path: |
-            openixcli-${{ matrix.target }}.tar.gz
-            openixcli-${{ matrix.target }}.dmg
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.dmg
 
   build-windows:
     name: Build Windows
@@ -213,7 +187,7 @@ jobs:
         run: |
           mkdir release
           cp target/${{ matrix.target }}/release/openixcli.exe release/
-          Compress-Archive -Path release/* -DestinationPath openixcli-${{ matrix.target }}.zip
+          Compress-Archive -Path release/* -DestinationPath openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.zip
 
       - name: Install WiX Toolset
         run: |
@@ -242,7 +216,7 @@ jobs:
           </Wix>
           "@
           $wxsContent | Out-File -FilePath "openixcli.wxs" -Encoding UTF8
-          wix build openixcli.wxs -o openixcli-${{ matrix.target }}.msi
+          wix build openixcli.wxs -o openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.msi
         shell: pwsh
 
       - name: Install NSIS
@@ -257,7 +231,7 @@ jobs:
           $nsisContent = @"
           !include "MUI2.nsh"
           Name "OpenixCLI"
-          OutFile "openixcli-${{ matrix.target }}-setup.exe"
+          OutFile "openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}-setup.exe"
           InstallDir "$PROGRAMFILES\OpenixCLI"
           InstallDirRegKey HKLM "Software\OpenixCLI" "Install_Dir"
           RequestExecutionLevel admin
@@ -301,11 +275,11 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-${{ matrix.target }}
+          name: windows-${{ env.RELEASE_TAG }}-${{ matrix.target }}
           path: |
-            openixcli-${{ matrix.target }}.zip
-            openixcli-${{ matrix.target }}.msi
-            openixcli-${{ matrix.target }}-setup.exe
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.zip
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.msi
+            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}-setup.exe
 
   generate-changelog:
     name: Generate Changelog
