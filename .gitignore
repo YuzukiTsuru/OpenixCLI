@@ -3,5 +3,6 @@ cargo.lock
 docs/
 .idea/
 rpm/
+.claude/
 
 

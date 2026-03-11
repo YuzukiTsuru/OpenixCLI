@@ -28,3 +28,14 @@ git = "https://github.com/YuzukiTsuru/libefex"
 [[bin]]
 name = "openixcli"
 path = "src/main.rs"
+
+# DEB package metadata
+[package.metadata.deb]
+depends = "libusb-1.0-0 (>= 1.0.0)"
+
+# RPM package metadata (cargo-generate-rpm)
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/openixcli", dest = "/usr/bin/openixcli", mode = "755" }
+]
+requires = ["libusb1 >= 1.0.0"]
