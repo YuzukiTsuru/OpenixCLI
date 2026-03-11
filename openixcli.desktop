@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=OpenixCLI
+Comment=CLI tool for flashing Allwinner firmware
+Exec=openixcli
+Icon=openixcli
+Terminal=true
+Type=Application
+Categories=System;Utility;

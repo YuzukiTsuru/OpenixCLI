@@ -39,3 +39,7 @@ assets = [
   { source = "target/release/openixcli", dest = "/usr/bin/openixcli", mode = "755" }
 ]
 requires = ["libusb1 >= 1.0.0"]
+
+# AppImage metadata (cargo-appimage)
+[package.metadata.appimage]
+auto_link = true
