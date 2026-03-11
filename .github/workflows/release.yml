@@ -3,10 +3,17 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.0)'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   build-linux:
@@ -77,7 +84,7 @@ jobs:
           mkdir -p rpm/SPECS rpm/SOURCES rpm/BUILD rpm/RPMS rpm/SRPMS
           cat > rpm/SPECS/openixcli.spec << 'EOF'
           Name: openixcli
-          Version: ${{ github.event.release.tag_name }}
+          Version: ${{ env.RELEASE_TAG }}
           Release: 1
           Summary: A command-line firmware flashing tool for Allwinner chips
           License: MIT
@@ -240,7 +247,7 @@ jobs:
 
       - name: Create MSI package
         run: |
-          $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
+          $version = "${{ env.RELEASE_TAG }}" -replace '^v', ''
           $wxsContent = @"
           <?xml version="1.0" encoding="UTF-8"?>
           <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
