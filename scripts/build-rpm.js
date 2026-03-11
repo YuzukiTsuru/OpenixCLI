@@ -70,15 +70,34 @@ try {
   });
   
   // Find the built RPM
-  const rpmFiles = fs.readdirSync(rpmsDir).filter(file => file.endsWith('.rpm'));
+  const archDir = path.join(rpmsDir, 'x86_64');
+  let rpmFiles = [];
+  
+  // Check in x86_64 subdirectory first
+  if (fs.existsSync(archDir)) {
+    rpmFiles = fs.readdirSync(archDir).filter(file => file.endsWith('.rpm'));
+  }
+  
+  // If no files found, check root rpms directory
+  if (rpmFiles.length === 0) {
+    rpmFiles = fs.readdirSync(rpmsDir).filter(file => file.endsWith('.rpm'));
+  }
+  
   if (rpmFiles.length > 0) {
-    const rpmFile = path.join(rpmsDir, rpmFiles[0]);
+    const rpmFile = rpmFiles.length > 0 && fs.existsSync(archDir) ? 
+      path.join(archDir, rpmFiles[0]) : 
+      path.join(rpmsDir, rpmFiles[0]);
     const outputFile = path.join(outputDir, `openixcli-${target}.rpm`);
     
     fs.copyFileSync(rpmFile, outputFile);
     console.log(`RPM built successfully: ${outputFile}`);
   } else {
     console.error('No RPM file found after build');
+    // List directory contents for debugging
+    console.error('Contents of rpmsDir:', fs.readdirSync(rpmsDir));
+    if (fs.existsSync(archDir)) {
+      console.error('Contents of archDir:', fs.readdirSync(archDir));
+    }
     process.exit(1);
   }
 } catch (error) {
