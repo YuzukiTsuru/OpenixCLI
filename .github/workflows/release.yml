@@ -278,7 +278,7 @@ jobs:
 
       - name: Create NSIS installer
         run: |
-          $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
+          $version = "${{ env.RELEASE_TAG }}" -replace '^v', ''
           $nsisContent = @"
           !include "MUI2.nsh"
           Name "OpenixCLI"
@@ -414,6 +414,7 @@ jobs:
       - name: Update release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           body: ${{ steps.full_changelog.outputs.changelog }}
           files: release-assets/*
         env:
