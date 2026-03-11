@@ -30,6 +30,10 @@ fs.mkdirSync(sourcesDir, { recursive: true });
 fs.mkdirSync(srpmsDir, { recursive: true });
 
 // Create spec file
+const projectRoot = path.join(__dirname, '..');
+// Use POSIX style path for Linux compatibility
+const binaryPath = path.join(projectRoot, 'target', target, 'release', 'openixcli').replace(/\\/g, '/');
+
 const specContent = `Name: openixcli
 Version: ${cleanVersion}
 Release: 1
@@ -46,7 +50,7 @@ OpenixCLI is a powerful and user-friendly CLI tool designed for flashing firmwar
 
 %install
 mkdir -p %{buildroot}/usr/bin
-cp target/${target}/release/openixcli %{buildroot}/usr/bin/
+cp ${binaryPath} %{buildroot}/usr/bin/
 
 %build
 
