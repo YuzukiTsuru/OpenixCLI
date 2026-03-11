@@ -96,9 +96,8 @@ jobs:
               ;;
           esac
 
-          # Create sysroot in home directory
-          SYSROOT="$HOME/cross-sysroot"
-          mkdir -p ${SYSROOT}/usr/lib ${SYSROOT}/usr/include ${SYSROOT}/usr/lib/pkgconfig
+          # Cross-compiler sysroot path
+          SYSROOT="/usr/${HOST_TRIPLE}"
 
           # Build libusb
           git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb
@@ -111,7 +110,7 @@ jobs:
             --enable-shared \
             --disable-udev
           make -j$(nproc)
-          make install DESTDIR=${SYSROOT}
+          sudo make install DESTDIR=${SYSROOT}
 
           # Build eudev (libudev)
           git clone --depth 1 --branch v3.2.14 https://github.com/eudev-project/eudev.git /tmp/eudev
@@ -126,7 +125,7 @@ jobs:
             --disable-blkid \
             --disable-kmod
           make -j$(nproc)
-          make install DESTDIR=${SYSROOT}
+          sudo make install DESTDIR=${SYSROOT}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -141,13 +140,28 @@ jobs:
 
       - name: Build binary
         run: |
-          SYSROOT="$HOME/cross-sysroot"
-          if [ "${{ matrix.target }}" != "x86_64-unknown-linux-gnu" ]; then
-            export LIBRARY_PATH="${SYSROOT}/usr/lib:${LIBRARY_PATH:-}"
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-gnu)
+              SYSROOT="/usr/aarch64-linux-gnu"
+              ;;
+            arm-unknown-linux-gnueabihf)
+              SYSROOT="/usr/arm-linux-gnueabihf"
+              ;;
+            riscv64gc-unknown-linux-gnu)
+              SYSROOT="/usr/riscv64-linux-gnu"
+              ;;
+            *)
+              SYSROOT=""
+              ;;
+          esac
+
+          if [ -n "${SYSROOT}" ]; then
+            export LIBRARY_PATH="${SYSROOT}/lib:${SYSROOT}/usr/lib:${LIBRARY_PATH:-}"
             export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
             export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
             export CMAKE_PREFIX_PATH="${SYSROOT}/usr"
-            export RUSTFLAGS="-L ${SYSROOT}/usr/lib"
+            export CMAKE_FIND_ROOT_PATH="${SYSROOT}"
+            export RUSTFLAGS="-L ${SYSROOT}/lib -L ${SYSROOT}/usr/lib"
           fi
           cargo build --release --target ${{ matrix.target }}
         env:
