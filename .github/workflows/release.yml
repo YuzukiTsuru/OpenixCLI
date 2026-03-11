@@ -67,7 +67,9 @@ jobs:
 
       - name: Build DEB package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo deb -- --target ${{ matrix.target }}
+        run: |
+          cargo deb -- --target ${{ matrix.target }} --no-build
+          mv target/${{ matrix.target }}/debian/openixcli_*.deb openixcli-${{ matrix.target }}.deb || true
 
       - name: Build RPM package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
