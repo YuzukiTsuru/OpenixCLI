@@ -2,4 +2,6 @@ target/
 cargo.lock
 docs/
 .idea/
+rpm/
+
 
