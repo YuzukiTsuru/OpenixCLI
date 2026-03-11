@@ -87,6 +87,16 @@ jobs:
           CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
           CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
           CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER: loongarch64-linux-gnu-gcc
+          # CMake cross-compilation settings
+          CMAKE_SYSTEM_NAME: Linux
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+          CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
+          CXX_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-g++
+          CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
+          CXX_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-g++
+          CC_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-gcc
+          CXX_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-g++
 
       - name: Create tarball
         run: |
