@@ -31,12 +31,6 @@ jobs:
           - target: arm-unknown-linux-gnueabihf
             arch: arm
             toolchain: stable
-          - target: riscv64gc-unknown-linux-gnu
-            arch: riscv64
-            toolchain: stable
-          - target: loongarch64-unknown-linux-gnu
-            arch: loong64
-            toolchain: stable
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,15 +51,15 @@ jobs:
           case "${{ matrix.target }}" in
             aarch64-unknown-linux-gnu)
               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+              sudo dpkg --add-architecture arm64
+              sudo apt-get update
+              sudo apt-get install -y libusb-1.0-0-dev:arm64 libudev-dev:arm64
               ;;
             arm-unknown-linux-gnueabihf)
               sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-              ;;
-            riscv64gc-unknown-linux-gnu)
-              sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
-              ;;
-            loongarch64-unknown-linux-gnu)
-              sudo apt-get install -y gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu || true
+              sudo dpkg --add-architecture armhf
+              sudo apt-get update
+              sudo apt-get install -y libusb-1.0-0-dev:armhf libudev-dev:armhf
               ;;
           esac
 
@@ -85,18 +79,15 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
-          CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER: loongarch64-linux-gnu-gcc
           # CMake cross-compilation settings
           CMAKE_SYSTEM_NAME: Linux
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
           CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
           CXX_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-g++
-          CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
-          CXX_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-g++
-          CC_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-gcc
-          CXX_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-g++
+          # pkg-config paths for cross-compilation
+          PKG_CONFIG_PATH_aarch64_unknown_linux_gnu: /usr/lib/aarch64-linux-gnu/pkgconfig
+          PKG_CONFIG_PATH_arm_unknown_linux_gnueabihf: /usr/lib/arm-linux-gnueabihf/pkgconfig
 
       - name: Create tarball
         run: |
@@ -309,7 +300,6 @@ jobs:
           echo "- **ARM**: \`openixcli-arm-unknown-linux-gnueabihf.tar.gz\`" >> $GITHUB_OUTPUT
           echo "- **RISC-V 64**: \`openixcli-riscv64gc-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
           echo "- **RISC-V 64**: \`openixcli-riscv64gc-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
-          echo "- **LoongArch64**: \`openixcli-loongarch64-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### macOS" >> $GITHUB_OUTPUT
           echo "- **Apple Silicon**: \`openixcli-aarch64-apple-darwin.tar.gz\` / \`.dmg\`" >> $GITHUB_OUTPUT
