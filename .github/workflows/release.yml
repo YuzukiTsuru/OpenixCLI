@@ -298,8 +298,6 @@ jobs:
           echo "- **x86_64**: \`openixcli-x86_64-unknown-linux-gnu.tar.gz\` / \`.deb\` / \`.rpm\` / \`.AppImage\`" >> $GITHUB_OUTPUT
           echo "- **ARM64**: \`openixcli-aarch64-unknown-linux-gnu.tar.gz\` / \`.deb\` / \`.AppImage\`" >> $GITHUB_OUTPUT
           echo "- **ARM**: \`openixcli-arm-unknown-linux-gnueabihf.tar.gz\`" >> $GITHUB_OUTPUT
-          echo "- **RISC-V 64**: \`openixcli-riscv64gc-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
-          echo "- **RISC-V 64**: \`openixcli-riscv64gc-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### macOS" >> $GITHUB_OUTPUT
           echo "- **Apple Silicon**: \`openixcli-aarch64-apple-darwin.tar.gz\` / \`.dmg\`" >> $GITHUB_OUTPUT
