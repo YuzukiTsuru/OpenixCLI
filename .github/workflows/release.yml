@@ -67,7 +67,7 @@ jobs:
 
       - name: Build DEB package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo deb --release --target ${{ matrix.target }} --output openixcli-${{ matrix.target }}.deb
+        run: cargo deb -- --release --target ${{ matrix.target }} --output openixcli-${{ matrix.target }}.deb
 
       - name: Build RPM package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -239,7 +239,7 @@ jobs:
       - name: Create MSI package
         run: |
           $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
-          $wxsContent = @'
+          $wxsContent = @"
           <?xml version="1.0" encoding="UTF-8"?>
           <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
             <Package Name="OpenixCLI" Manufacturer="YuzukiTsuru" Version="$version" UpgradeCode="E9F8A8C0-1D2E-4B3C-8F9A-5E6D7C8B9A0F" Language="1033">
@@ -256,7 +256,7 @@ jobs:
               </StandardDirectory>
             </Package>
           </Wix>
-          '@
+          "@
           $wxsContent | Out-File -FilePath "openixcli.wxs" -Encoding UTF8
           wix build openixcli.wxs -o openixcli-${{ matrix.target }}.msi
         shell: pwsh
@@ -268,7 +268,7 @@ jobs:
       - name: Create NSIS installer
         run: |
           $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
-          $nsisContent = @'
+          $nsisContent = @"
           !include "MUI2.nsh"
           Name "OpenixCLI"
           OutFile "openixcli-${{ matrix.target }}-setup.exe"
@@ -307,7 +307,7 @@ jobs:
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenixCLI"
             DeleteRegKey HKLM "Software\OpenixCLI"
           SectionEnd
-          '@
+          "@
           $nsisContent | Out-File -FilePath "installer.nsi" -Encoding UTF8
           makensis installer.nsi
         shell: pwsh
