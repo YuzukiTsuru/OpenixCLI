@@ -67,7 +67,7 @@ jobs:
 
       - name: Build DEB package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo deb -- --release --target ${{ matrix.target }} --output openixcli-${{ matrix.target }}.deb
+        run: cargo deb -- --target ${{ matrix.target }} --output openixcli-${{ matrix.target }}.deb
 
       - name: Build RPM package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
