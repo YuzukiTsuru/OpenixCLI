@@ -82,29 +82,29 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           mkdir -p rpm/SPECS rpm/SOURCES rpm/BUILD rpm/RPMS rpm/SRPMS
-          cat > rpm/SPECS/openixcli.spec << 'EOF'
-          Name: openixcli
-          Version: ${{ env.RELEASE_TAG }}
-          Release: 1
-          Summary: A command-line firmware flashing tool for Allwinner chips
-          License: MIT
-          URL: https://github.com/YuzukiTsuru/OpenixCLI
+          cat > rpm/SPECS/openixcli.spec << EOF
+Name: openixcli
+Version: ${{ env.RELEASE_TAG }}
+Release: 1
+Summary: A command-line firmware flashing tool for Allwinner chips
+License: MIT
+URL: https://github.com/YuzukiTsuru/OpenixCLI
 
-          %description
-          OpenixCLI is a powerful and user-friendly CLI tool designed for flashing firmware to devices powered by Allwinner SoCs.
+%description
+OpenixCLI is a powerful and user-friendly CLI tool designed for flashing firmware to devices powered by Allwinner SoCs.
 
-          %files
-          %defattr(-,root,root,-)
-          /usr/bin/openixcli
+%files
+%defattr(-,root,root,-)
+/usr/bin/openixcli
 
-          %install
-          mkdir -p %{buildroot}/usr/bin
-          cp target/${{ matrix.target }}/release/openixcli %{buildroot}/usr/bin/
+%install
+mkdir -p %{buildroot}/usr/bin
+cp target/${{ matrix.target }}/release/openixcli %{buildroot}/usr/bin/
 
-          %build
+%build
 
-          %prep
-          EOF
+%prep
+EOF
           rpmbuild --define "_topdir $(pwd)/rpm" --target x86_64 -bb rpm/SPECS/openixcli.spec
           mv rpm/RPMS/x86_64/openixcli-*.rpm openixcli-${{ matrix.target }}.rpm
 
