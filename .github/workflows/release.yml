@@ -24,21 +24,27 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x64
+            toolchain: stable
           - target: aarch64-unknown-linux-gnu
             arch: arm64
+            toolchain: stable
           - target: arm-unknown-linux-gnueabihf
             arch: arm
+            toolchain: stable
           - target: riscv64gc-unknown-linux-gnu
             arch: riscv64
-          - target: riscv32imac-unknown-linux-gnu
-            arch: riscv32
+            toolchain: stable
+          - target: loongarch64-unknown-linux-gnu
+            arch: loong64
+            toolchain: stable
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Install system dependencies
@@ -58,9 +64,8 @@ jobs:
             riscv64gc-unknown-linux-gnu)
               sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
               ;;
-            riscv32imac-unknown-linux-gnu)
-              # RISC-V 32 may need special handling
-              sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+            loongarch64-unknown-linux-gnu)
+              sudo apt-get install -y gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu || true
               ;;
           esac
 
@@ -81,7 +86,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
           CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
-          CARGO_TARGET_RISCV32IMAC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+          CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER: loongarch64-linux-gnu-gcc
 
       - name: Create tarball
         run: |
@@ -293,7 +298,8 @@ jobs:
           echo "- **ARM64**: \`openixcli-aarch64-unknown-linux-gnu.tar.gz\` / \`.deb\` / \`.AppImage\`" >> $GITHUB_OUTPUT
           echo "- **ARM**: \`openixcli-arm-unknown-linux-gnueabihf.tar.gz\`" >> $GITHUB_OUTPUT
           echo "- **RISC-V 64**: \`openixcli-riscv64gc-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
-          echo "- **RISC-V 32**: \`openixcli-riscv32imac-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
+          echo "- **RISC-V 64**: \`openixcli-riscv64gc-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
+          echo "- **LoongArch64**: \`openixcli-loongarch64-unknown-linux-gnu.tar.gz\`" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### macOS" >> $GITHUB_OUTPUT
           echo "- **Apple Silicon**: \`openixcli-aarch64-apple-darwin.tar.gz\` / \`.dmg\`" >> $GITHUB_OUTPUT
