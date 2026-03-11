@@ -54,29 +54,65 @@ jobs:
           case "${{ matrix.target }}" in
             aarch64-unknown-linux-gnu)
               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-              sudo dpkg --add-architecture arm64
-              sudo apt-get update
-              sudo apt-get install -y libusb-1.0-0-dev:arm64 libudev-dev:arm64
               ;;
             arm-unknown-linux-gnueabihf)
               sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-              sudo dpkg --add-architecture armhf
-              # Use Ubuntu ports for armhf
-              sudo sed -i 's/deb http/deb [arch=amd64] http/' /etc/apt/sources.list
-              echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble main universe" | sudo tee /etc/apt/sources.list.d/armhf.list
-              sudo apt-get update
-              sudo apt-get install -y libusb-1.0-0-dev:armhf libudev-dev:armhf
               ;;
             riscv64gc-unknown-linux-gnu)
               sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
-              sudo dpkg --add-architecture riscv64
-              # Use Ubuntu ports for riscv64
-              sudo sed -i 's/deb http/deb [arch=amd64] http/' /etc/apt/sources.list
-              echo "deb [arch=riscv64] http://ports.ubuntu.com/ubuntu-ports noble main universe" | sudo tee /etc/apt/sources.list.d/riscv64.list
-              sudo apt-get update
-              sudo apt-get install -y libusb-1.0-0-dev:riscv64 libudev-dev:riscv64
               ;;
           esac
+
+      - name: Build libusb and libudev from source for cross-compilation
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
+        run: |
+          # Install build dependencies
+          sudo apt-get install -y autoconf automake libtool pkg-config
+
+          # Set cross-compile settings based on target
+          case "${{ matrix.target }}" in
+            aarch64-unknown-linux-gnu)
+              HOST_TRIPLE="aarch64-linux-gnu"
+              ;;
+            arm-unknown-linux-gnueabihf)
+              HOST_TRIPLE="arm-linux-gnueabihf"
+              ;;
+            riscv64gc-unknown-linux-gnu)
+              HOST_TRIPLE="riscv64-linux-gnu"
+              ;;
+          esac
+
+          # Create sysroot in home directory
+          SYSROOT="$HOME/cross-sysroot"
+          mkdir -p ${SYSROOT}/usr/lib ${SYSROOT}/usr/include ${SYSROOT}/usr/lib/pkgconfig
+
+          # Build libusb
+          git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb
+          cd /tmp/libusb
+          ./bootstrap.sh
+          ./configure \
+            --host=${HOST_TRIPLE} \
+            --prefix=/usr \
+            --disable-static \
+            --enable-shared \
+            --disable-udev
+          make -j$(nproc)
+          make install DESTDIR=${SYSROOT}
+
+          # Build eudev (libudev)
+          git clone --depth 1 --branch v3.2.14 https://github.com/eudev-project/eudev.git /tmp/eudev
+          cd /tmp/eudev
+          ./autogen.sh
+          ./configure \
+            --host=${HOST_TRIPLE} \
+            --prefix=/usr \
+            --disable-static \
+            --enable-shared \
+            --disable-programs \
+            --disable-blkid \
+            --disable-kmod
+          make -j$(nproc)
+          make install DESTDIR=${SYSROOT}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -90,7 +126,16 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          SYSROOT="$HOME/cross-sysroot"
+          if [ "${{ matrix.target }}" != "x86_64-unknown-linux-gnu" ]; then
+            export LIBRARY_PATH="${SYSROOT}/usr/lib:${LIBRARY_PATH:-}"
+            export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
+            export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
+            export CMAKE_PREFIX_PATH="${SYSROOT}/usr"
+            export RUSTFLAGS="-L ${SYSROOT}/usr/lib"
+          fi
+          cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
@@ -103,10 +148,6 @@ jobs:
           CXX_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-g++
           CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
           CXX_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-g++
-          # pkg-config paths for cross-compilation
-          PKG_CONFIG_PATH_aarch64_unknown_linux_gnu: /usr/lib/aarch64-linux-gnu/pkgconfig
-          PKG_CONFIG_PATH_arm_unknown_linux_gnueabihf: /usr/lib/arm-linux-gnueabihf/pkgconfig
-          PKG_CONFIG_PATH_riscv64gc_unknown_linux_gnu: /usr/lib/riscv64-linux-gnu/pkgconfig
 
       - name: Create tarball
         run: |
