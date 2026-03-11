@@ -67,7 +67,7 @@ jobs:
 
       - name: Build DEB package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo deb -- --target ${{ matrix.target }} --output openixcli-${{ matrix.target }}.deb
+        run: cargo deb -- --target ${{ matrix.target }}
 
       - name: Build RPM package
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -264,6 +264,8 @@ jobs:
       - name: Install NSIS
         run: |
           choco install nsis -y
+          $env:PATH += ";C:\Program Files (x86)\NSIS"
+          [Environment]::SetEnvironmentVariable("PATH", $env:PATH, "Machine")
 
       - name: Create NSIS installer
         run: |
@@ -309,7 +311,7 @@ jobs:
           SectionEnd
           "@
           $nsisContent | Out-File -FilePath "installer.nsi" -Encoding UTF8
-          makensis installer.nsi
+          & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
         shell: pwsh
 
       - name: Upload Windows artifacts
