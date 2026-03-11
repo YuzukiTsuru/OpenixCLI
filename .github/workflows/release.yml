@@ -67,7 +67,7 @@ jobs:
         if: matrix.target != 'x86_64-unknown-linux-gnu'
         run: |
           # Install build dependencies
-          sudo apt-get install -y autoconf automake libtool pkg-config
+          sudo apt-get install -y autoconf automake libtool pkg-config xsltproc
 
           # Set cross-compile settings based on target
           case "${{ matrix.target }}" in
@@ -99,7 +99,7 @@ jobs:
           make -j$(nproc)
           make install DESTDIR=${SYSROOT}
 
-          # Build eudev (libudev)
+          # Build eudev (libudev) - disable man pages
           git clone --depth 1 --branch v3.2.14 https://github.com/eudev-project/eudev.git /tmp/eudev
           cd /tmp/eudev
           ./autogen.sh
@@ -110,7 +110,8 @@ jobs:
             --enable-shared \
             --disable-programs \
             --disable-blkid \
-            --disable-kmod
+            --disable-kmod \
+            --disable-manpages
           make -j$(nproc)
           make install DESTDIR=${SYSROOT}
 
