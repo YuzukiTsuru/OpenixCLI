@@ -3,23 +3,23 @@ passthrough = ["CMAKE_PREFIX_PATH"]
 
 [target.x86_64-unknown-linux-gnu]
 pre-build = [
-    "apt-get update && apt-get install -y libusb-1.0-0-dev libudev-dev cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+    "apt-get update && apt-get install -y libusb-1.0-0-dev libudev-dev cmake pkg-config || (apt-get install -y autoconf automake libtool git cmake pkg-config && git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb && cd /tmp/libusb && ./bootstrap.sh && ./configure --prefix=/usr --disable-static --enable-shared --disable-udev && make -j$(nproc) && make install && rm -rf /tmp/libusb) && rm -rf /var/lib/apt/lists/*"
 ]
 
 [target.aarch64-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config || (apt-get install -y autoconf automake libtool git cmake pkg-config && git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb && cd /tmp/libusb && ./bootstrap.sh && ./configure --host=aarch64-linux-gnu --prefix=/usr/aarch64-linux-gnu --disable-static --enable-shared --disable-udev CC=aarch64-linux-gnu-gcc && make -j$(nproc) && make install && rm -rf /tmp/libusb) && rm -rf /var/lib/apt/lists/*"
 ]
 
 [target.arm-unknown-linux-gnueabihf]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config || (apt-get install -y autoconf automake libtool git cmake pkg-config && git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb && cd /tmp/libusb && ./bootstrap.sh && ./configure --host=arm-linux-gnueabihf --prefix=/usr/arm-linux-gnueabihf --disable-static --enable-shared --disable-udev CC=arm-linux-gnueabihf-gcc && make -j$(nproc) && make install && rm -rf /tmp/libusb) && rm -rf /var/lib/apt/lists/*"
 ]
 
 [target.riscv64gc-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config || (apt-get install -y autoconf automake libtool git cmake pkg-config && git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb && cd /tmp/libusb && ./bootstrap.sh && ./configure --host=riscv64-linux-gnu --prefix=/usr/riscv64-linux-gnu --disable-static --enable-shared --disable-udev CC=riscv64-linux-gnu-gcc && make -j$(nproc) && make install && rm -rf /tmp/libusb) && rm -rf /var/lib/apt/lists/*"
 ]
