@@ -161,7 +161,6 @@ jobs:
             export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
             export CMAKE_PREFIX_PATH="${SYSROOT}/usr"
             export CMAKE_FIND_ROOT_PATH="${SYSROOT}"
-            export RUSTFLAGS="-L ${SYSROOT}/lib -L ${SYSROOT}/usr/lib"
           fi
           cargo build --release --target ${{ matrix.target }}
         env:
@@ -176,6 +175,10 @@ jobs:
           CXX_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-g++
           CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
           CXX_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-g++
+          # Target-specific rustflags (only affects target, not build scripts)
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-L /usr/aarch64-linux-gnu/lib -L /usr/aarch64-linux-gnu/usr/lib"
+          CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS: "-L /usr/arm-linux-gnueabihf/lib -L /usr/arm-linux-gnueabihf/usr/lib"
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-L /usr/riscv64-linux-gnu/lib -L /usr/riscv64-linux-gnu/usr/lib"
 
       - name: Create tarball
         run: |
