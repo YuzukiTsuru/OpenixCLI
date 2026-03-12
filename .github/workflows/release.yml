@@ -26,10 +26,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cross
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cross
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0-dev libudev-dev pkg-config rpm
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -43,12 +43,12 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build binary
-        run: cross build --release --target x86_64-unknown-linux-gnu
+        run: cargo build --release
 
       - name: Create tarball
         run: |
           mkdir -p release
-          cp target/x86_64-unknown-linux-gnu/release/openixcli release/
+          cp target/release/openixcli release/
           cd release
           tar -czvf openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz openixcli
           mv openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz ..
@@ -58,18 +58,18 @@ jobs:
 
       - name: Build DEB package
         run: |
-          cargo deb --target x86_64-unknown-linux-gnu
+          cargo deb
           mv target/debian/openixcli_*.deb openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.deb || true
 
       - name: Build RPM package
         run: |
-          cargo generate-rpm --target x86_64-unknown-linux-gnu
-          mv target/x86_64-unknown-linux-gnu/generate-rpm/*.rpm openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.rpm
+          cargo generate-rpm
+          mv target/generate-rpm/*.rpm openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.rpm
 
       - name: Build AppImage
         run: |
-          cargo appimage --target x86_64-unknown-linux-gnu
-          mv target/x86_64-unknown-linux-gnu/appimage/*.AppImage openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.AppImage || true
+          cargo appimage
+          mv target/appimage/*.AppImage openixcli-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.AppImage || true
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
