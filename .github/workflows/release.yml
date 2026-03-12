@@ -61,7 +61,7 @@ jobs:
           mv openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz ..
 
       - name: Install packaging tools
-        run: cargo install cargo-deb cargo-generate-rpm cargo-appimage
+        run: cargo install cargo-deb cargo-generate-rpm
 
       - name: Build DEB package
         run: |
@@ -74,11 +74,6 @@ jobs:
           cargo generate-rpm
           mv target/generate-rpm/*.rpm openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.rpm
 
-      - name: Build AppImage
-        run: |
-          cargo appimage
-          mv target/appimage/*.AppImage openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.AppImage || true
-
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -87,7 +82,6 @@ jobs:
             openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
             openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.deb
             openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.rpm
-            openixcli-${{ env.RELEASE_TAG }}-${{ matrix.target }}.AppImage
 
   build-macos:
     name: Build macOS
@@ -234,7 +228,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*-setup.exe" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" -o -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*-setup.exe" \) -exec cp {} release-assets/ \;
 
       - name: Generate full changelog
         id: full_changelog
@@ -254,8 +248,8 @@ jobs:
           echo "## Downloads" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### Linux" >> $GITHUB_OUTPUT
-          echo "- **x86_64**: \`openixcli-x86_64-unknown-linux-gnu.tar.gz\` / \`.deb\` / \`.rpm\` / \`.AppImage\`" >> $GITHUB_OUTPUT
-          echo "- **ARM64**: \`openixcli-aarch64-unknown-linux-gnu.tar.gz\` / \`.deb\` / \`.AppImage\`" >> $GITHUB_OUTPUT
+          echo "- **x86_64**: \`openixcli-x86_64-unknown-linux-gnu.tar.gz\` / \`.deb\` / \`.rpm\`" >> $GITHUB_OUTPUT
+          echo "- **ARM64**: \`openixcli-aarch64-unknown-linux-gnu.tar.gz\` / \`.deb\`" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### macOS" >> $GITHUB_OUTPUT
           echo "- **Apple Silicon**: \`openixcli-aarch64-apple-darwin.tar.gz\` / \`.dmg\`" >> $GITHUB_OUTPUT
