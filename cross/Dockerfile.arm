@@ -1,6 +1,0 @@
-FROM ghcr.io/cross-rs/arm-unknown-linux-gnueabihf:0.2.5
-
-RUN apt-get update && apt-get install -y \
-    libusb-1.0-0-dev:armhf \
-    libudev-dev:armhf \
-    && rm -rf /var/lib/apt/lists/*

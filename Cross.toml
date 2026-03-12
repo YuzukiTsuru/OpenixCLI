@@ -1,16 +1,25 @@
 [build.env]
-passthrough = [
-    "CMAKE_PREFIX_PATH",
-]
+passthrough = ["CMAKE_PREFIX_PATH"]
 
 [target.x86_64-unknown-linux-gnu]
-dockerfile = "./cross/Dockerfile.x86_64"
+pre-build = [
+    "apt-get update && apt-get install -y libusb-1.0-0-dev libudev-dev cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+]
 
 [target.aarch64-unknown-linux-gnu]
-dockerfile = "./cross/Dockerfile.aarch64"
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+]
 
 [target.arm-unknown-linux-gnueabihf]
-dockerfile = "./cross/Dockerfile.arm"
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+]
 
 [target.riscv64gc-unknown-linux-gnu]
-dockerfile = "./cross/Dockerfile.riscv64"
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install -y libusb-1.0-0-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH cmake pkg-config && rm -rf /var/lib/apt/lists/*"
+]
