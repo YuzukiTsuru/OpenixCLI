@@ -38,7 +38,3 @@ depends = "libusb-1.0-0 (>= 1.0.0)"
 assets = [
   { source = "target/release/openixcli", dest = "/usr/bin/openixcli", mode = "755" }
 ]
-
-# AppImage metadata (cargo-appimage)
-[package.metadata.appimage]
-auto_link = true
