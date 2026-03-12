@@ -24,108 +24,25 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x64
-            toolchain: stable
           - target: aarch64-unknown-linux-gnu
             arch: arm64
-            toolchain: stable
           - target: arm-unknown-linux-gnueabihf
             arch: arm
-            toolchain: stable
           - target: riscv64gc-unknown-linux-gnu
             arch: riscv64
-            toolchain: stable
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libusb-1.0-0-dev libudev-dev pkg-config rpm
-
-      - name: Install cross-compilation toolchain
-        run: |
-          case "${{ matrix.target }}" in
-            aarch64-unknown-linux-gnu)
-              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-              ;;
-            arm-unknown-linux-gnueabihf)
-              sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-              ;;
-            riscv64gc-unknown-linux-gnu)
-              sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
-              ;;
-          esac
-
-      - name: Build libusb and libudev from source for cross-compilation
-        if: matrix.target != 'x86_64-unknown-linux-gnu'
-        run: |
-          # Install build dependencies
-          sudo apt-get install -y \
-            build-essential \
-            libblkid-dev \
-            libkmod-dev \
-            libselinux1-dev \
-            autoconf \
-            automake \
-            xsltproc \
-            docbook-xml \
-            docbook-xsl \
-            gperf \
-            libglib-object-introspection-perl \
-            libglib2.0-dev \
-            libtool \
-            pkg-config
-
-          # Set cross-compile settings based on target
-          case "${{ matrix.target }}" in
-            aarch64-unknown-linux-gnu)
-              HOST_TRIPLE="aarch64-linux-gnu"
-              ;;
-            arm-unknown-linux-gnueabihf)
-              HOST_TRIPLE="arm-linux-gnueabihf"
-              ;;
-            riscv64gc-unknown-linux-gnu)
-              HOST_TRIPLE="riscv64-linux-gnu"
-              ;;
-          esac
-
-          # Cross-compiler sysroot path
-          SYSROOT="/usr/${HOST_TRIPLE}"
-
-          # Build libusb
-          git clone --depth 1 --branch v1.0.27 https://github.com/libusb/libusb.git /tmp/libusb
-          cd /tmp/libusb
-          ./bootstrap.sh
-          ./configure \
-            --host=${HOST_TRIPLE} \
-            --prefix=/usr \
-            --disable-static \
-            --enable-shared \
-            --disable-udev
-          make -j$(nproc)
-          sudo make install DESTDIR=${SYSROOT}
-
-          # Build eudev (libudev)
-          git clone --depth 1 --branch v3.2.14 https://github.com/eudev-project/eudev.git /tmp/eudev
-          cd /tmp/eudev
-          ./autogen.sh
-          ./configure \
-            --host=${HOST_TRIPLE} \
-            --prefix=/usr \
-            --disable-static \
-            --enable-shared \
-            --disable-programs \
-            --disable-blkid \
-            --disable-kmod
-          make -j$(nproc)
-          sudo make install DESTDIR=${SYSROOT}
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -139,46 +56,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Build binary
-        run: |
-          case "${{ matrix.target }}" in
-            aarch64-unknown-linux-gnu)
-              SYSROOT="/usr/aarch64-linux-gnu"
-              ;;
-            arm-unknown-linux-gnueabihf)
-              SYSROOT="/usr/arm-linux-gnueabihf"
-              ;;
-            riscv64gc-unknown-linux-gnu)
-              SYSROOT="/usr/riscv64-linux-gnu"
-              ;;
-            *)
-              SYSROOT=""
-              ;;
-          esac
-
-          if [ -n "${SYSROOT}" ]; then
-            export LIBRARY_PATH="${SYSROOT}/lib:${SYSROOT}/usr/lib:${LIBRARY_PATH:-}"
-            export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
-            export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
-            export CMAKE_PREFIX_PATH="${SYSROOT}/usr"
-            export CMAKE_FIND_ROOT_PATH="${SYSROOT}"
-          fi
-          cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
-          # CMake cross-compilation settings
-          CMAKE_SYSTEM_NAME: Linux
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
-          CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
-          CXX_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-g++
-          CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
-          CXX_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-g++
-          # Target-specific rustflags (only affects target, not build scripts)
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-L /usr/aarch64-linux-gnu/lib -L /usr/aarch64-linux-gnu/usr/lib"
-          CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS: "-L /usr/arm-linux-gnueabihf/lib -L /usr/arm-linux-gnueabihf/usr/lib"
-          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-L /usr/riscv64-linux-gnu/lib -L /usr/riscv64-linux-gnu/usr/lib"
+        run: cross build --release --target ${{ matrix.target }}
 
       - name: Create tarball
         run: |

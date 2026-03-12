@@ -1,0 +1,16 @@
+[build.env]
+passthrough = [
+    "CMAKE_PREFIX_PATH",
+]
+
+[target.x86_64-unknown-linux-gnu]
+dockerfile = "./cross/Dockerfile.x86_64"
+
+[target.aarch64-unknown-linux-gnu]
+dockerfile = "./cross/Dockerfile.aarch64"
+
+[target.arm-unknown-linux-gnueabihf]
+dockerfile = "./cross/Dockerfile.arm"
+
+[target.riscv64gc-unknown-linux-gnu]
+dockerfile = "./cross/Dockerfile.riscv64"
