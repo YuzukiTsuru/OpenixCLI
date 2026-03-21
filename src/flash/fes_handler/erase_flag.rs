@@ -47,8 +47,11 @@ impl<'a> EraseFlag<'a> {
         let mut verify_success = false;
 
         for i in 0..MAX_VERIFY_RETRIES {
-            self.logger
-                .debug(&format!("Verifying erase flag, attempt {}/{}", i + 1, MAX_VERIFY_RETRIES));
+            self.logger.debug(&format!(
+                "Verifying erase flag, attempt {}/{}",
+                i + 1,
+                MAX_VERIFY_RETRIES
+            ));
 
             let verify_resp = ctx
                 .fes_verify_status(fes_data_type::ERASE)
