@@ -329,6 +329,10 @@ impl OpenixPacker {
         }
     }
 
+    pub fn get_sys_partition(&mut self) -> Result<Vec<u8>, PackerError> {
+        self.get_image_data_by_name("sys_partition")
+    }
+
     /// Get FES (Flash Eraser Script) data
     pub fn get_fes(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("fes")

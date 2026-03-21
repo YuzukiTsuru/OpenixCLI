@@ -20,7 +20,6 @@ pub use ubifs_config::UbifsConfig;
 
 use crate::config::boot_header::get_sunxi_boot_file_mode_string;
 use crate::config::mbr_parser::SunxiMbr;
-use crate::firmware::image_data::get_image_data_entry;
 use crate::firmware::{OpenixPacker, StorageType};
 use crate::flash::FlashMode;
 use crate::process::StageType;
@@ -153,10 +152,8 @@ impl<'a> FesHandler<'a> {
 
         let mut partition_parser = OpenixPartition::new();
 
-        if let Some(entry) = get_image_data_entry("sys_partition") {
-            if let Ok(data) = packer.get_file_data_by_maintype_subtype(entry.maintype, entry.subtype) {
-                partition_parser.parse_from_data(&data);
-            }
+        if let Ok(data) = packer.get_sys_partition() {
+            partition_parser.parse_from_data(&data);
         }
 
         let config_partitions = partition_parser.get_partitions();
