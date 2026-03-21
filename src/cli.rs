@@ -27,7 +27,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Scan for connected devices
-    Scan,
+    Scan {
+        /// Get detailed device information (requires device initialization)
+        #[arg(short = 'l', long, help = "Get detailed device information")]
+        detailed: bool,
+    },
 
     /// Flash firmware to device
     Flash {

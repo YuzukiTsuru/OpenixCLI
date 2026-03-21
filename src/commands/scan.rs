@@ -9,9 +9,12 @@ use libefex::{Context, DeviceMode};
 ///
 /// Scans for USB devices and displays information about connected Allwinner devices
 ///
+/// # Arguments
+/// * `detailed` - If true, initialize device context to get detailed information
+///
 /// # Returns
 /// Ok(()) on success, Error on failure
-pub async fn execute() -> anyhow::Result<()> {
+pub async fn execute(detailed: bool) -> anyhow::Result<()> {
     println!("{}", "Scanning USB devices...".cyan().bold());
     println!();
 
@@ -25,44 +28,49 @@ pub async fn execute() -> anyhow::Result<()> {
     println!("Found {} device(s):\n", devices.len());
 
     for (idx, dev) in devices.iter().enumerate() {
-        let mut ctx = Context::new();
-        ctx.scan_usb_device_at(dev.bus, dev.port)?;
-        ctx.usb_init()?;
-        ctx.efex_init()?;
-
-        let mode: String = match ctx.get_device_mode() {
-            DeviceMode::Fel => "FEL".red().to_string(),
-            DeviceMode::Srv => "FES".green().to_string(),
-            DeviceMode::UpdateCool => "UPDATE_COOL".yellow().to_string(),
-            DeviceMode::UpdateHot => "UPDATE_HOT".yellow().to_string(),
-            DeviceMode::Null => "NULL".white().to_string(),
-            DeviceMode::Unknown(v) => format!("UNKNOWN(0x{:04x})", v).white().to_string(),
-        };
-
-        let mode_str = ctx.get_device_mode_str().to_string();
-        let chip_version = unsafe { (*ctx.as_ptr()).resp.id };
-
         println!(
-            "[{}] {} {}, Port {:03} - {}",
+            "[{}] {} {}, Port {:03}",
             (idx + 1).to_string().cyan(),
             format!("Bus {:03}", dev.bus).white(),
             format!(", Port {:03}", dev.port).white(),
-            dev.port,
-            mode
+            dev.port
         );
-        println!(
-            "    Chip: {} (0x{:08x})",
-            mode_str.white().bold(),
-            chip_version
-        );
-        println!(
-            "    Mode: {}",
-            match ctx.get_device_mode() {
-                DeviceMode::Fel => "FEL (USB Boot)",
-                DeviceMode::Srv => "FES (U-Boot)",
-                _ => "Unknown",
+
+        if detailed {
+            let mut ctx = Context::new();
+            if ctx.scan_usb_device_at(dev.bus, dev.port).is_err() {
+                println!("    {}", "Failed to initialize device".red());
+                println!();
+                continue;
             }
-        );
+            if ctx.usb_init().is_err() {
+                println!("    {}", "Failed to initialize USB".red());
+                println!();
+                continue;
+            }
+            if ctx.efex_init().is_err() {
+                println!("    {}", "Failed to initialize EFEX".red());
+                println!();
+                continue;
+            }
+
+            let mode_str = ctx.get_device_mode_str().to_string();
+            let chip_version = unsafe { (*ctx.as_ptr()).resp.id };
+
+            println!(
+                "    Chip: {} (0x{:08x})",
+                mode_str.white().bold(),
+                chip_version
+            );
+            println!(
+                "    Mode: {}",
+                match ctx.get_device_mode() {
+                    DeviceMode::Fel => "FEL (USB Boot)",
+                    DeviceMode::Srv => "FES (U-Boot)",
+                    _ => "Unknown",
+                }
+            );
+        }
         println!();
     }
 

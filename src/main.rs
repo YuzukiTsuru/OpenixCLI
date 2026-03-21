@@ -59,9 +59,9 @@ async fn main() -> anyhow::Result<()> {
             // TUI mode - don't init the standard logger, TUI has its own
             tui::run().await?;
         }
-        Some(Commands::Scan) => {
+        Some(Commands::Scan { detailed }) => {
             setup_logging(cli.verbose);
-            commands::scan::execute().await?;
+            commands::scan::execute(detailed).await?;
         }
         Some(Commands::Flash {
             firmware,
