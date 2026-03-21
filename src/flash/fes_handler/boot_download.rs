@@ -69,17 +69,7 @@ impl<'a> BootDownload<'a> {
                     ctx.fes_down(&boot1_data, 0, FesDataType::Boot1)
                         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-                    let verify = ctx
-                        .fes_verify_status(fes_data_type::BOOT1)
-                        .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
-                    if verify.flag == EFEX_CRC32_VALID_FLAG {
-                        self.logger.stage_complete("Boot1 verified");
-                    } else {
-                        self.logger.warn(&format!(
-                            "Boot1 verify status: 0x{:04x}",
-                            verify.flag
-                        ));
-                    }
+                    self.verify_boot(ctx, fes_data_type::BOOT1, "Boot1").await?;
                 }
                 Err(e) => {
                     self.logger.debug(&format!(
@@ -126,19 +116,30 @@ impl<'a> BootDownload<'a> {
                 ctx.fes_down(&boot0_data, 0, FesDataType::Boot0)
                     .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-                let verify = ctx
-                    .fes_verify_status(fes_data_type::BOOT0)
-                    .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
-                if verify.flag == EFEX_CRC32_VALID_FLAG {
-                    self.logger.stage_complete("Boot0 verified");
-                } else {
-                    self.logger.warn(&format!(
-                        "Boot0 verify status: 0x{:04x}",
-                        verify.flag
-                    ));
-                }
+                self.verify_boot(ctx, fes_data_type::BOOT0, "Boot0").await?;
             }
         }
+        Ok(())
+    }
+
+    /// Verify boot image download
+    async fn verify_boot(
+        &self,
+        ctx: &libefex::Context,
+        data_type: u32,
+        name: &str,
+    ) -> FlashResult<()> {
+        let verify = ctx
+            .fes_verify_status(data_type)
+            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+
+        if verify.flag == EFEX_CRC32_VALID_FLAG {
+            self.logger.stage_complete(&format!("{} verified", name));
+        } else {
+            self.logger
+                .warn(&format!("{} verify status: 0x{:04x}", name, verify.flag));
+        }
+
         Ok(())
     }
 
