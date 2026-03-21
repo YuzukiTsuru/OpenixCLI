@@ -3,6 +3,7 @@
 //! Handles downloading MBR (Master Boot Record) to device storage
 
 use crate::config::mbr_parser::{is_valid_mbr, EFEX_CRC32_VALID_FLAG};
+use crate::flash::fes_handler::types::fes_data_type;
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
 use std::time::Duration;
@@ -46,7 +47,7 @@ impl<'a> MbrDownload<'a> {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             let verify_resp = ctx
-                .fes_verify_status(0x7f01)
+                .fes_verify_status(fes_data_type::MBR)
                 .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
             if verify_resp.flag == EFEX_CRC32_VALID_FLAG && verify_resp.media_crc == 0 {

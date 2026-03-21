@@ -5,6 +5,18 @@
 /// Item type for root filesystem FAT16 partition
 pub const ITEM_ROOTFSFAT16: &str = "RFSFAT16";
 
+/// FES data type values for verify operations
+pub mod fes_data_type {
+    pub const DRAM: u32 = 0x7f00;
+    pub const MBR: u32 = 0x7f01;
+    pub const BOOT1: u32 = 0x7f02;
+    pub const BOOT0: u32 = 0x7f03;
+    pub const ERASE: u32 = 0x7f04;
+    pub const FULL_IMG_SIZE: u32 = 0x7f10;
+    pub const EXT4_UBIFS: u32 = 0x7ff0;
+    pub const FLASH: u32 = 0x8000;
+}
+
 /// Information about a partition to be downloaded
 ///
 /// # Fields

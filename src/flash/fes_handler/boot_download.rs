@@ -5,6 +5,7 @@
 use crate::config::boot_header::{BOOT_FILE_MODE_NORMAL, BOOT_FILE_MODE_PKG, BOOT_FILE_MODE_TOC};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::{OpenixPacker, PackerError, StorageType};
+use crate::flash::fes_handler::types::fes_data_type;
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
 
@@ -69,10 +70,15 @@ impl<'a> BootDownload<'a> {
                         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
                     let verify = ctx
-                        .fes_verify_status(0x7f03)
+                        .fes_verify_status(fes_data_type::BOOT1)
                         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
                     if verify.flag == EFEX_CRC32_VALID_FLAG {
                         self.logger.stage_complete("Boot1 verified");
+                    } else {
+                        self.logger.warn(&format!(
+                            "Boot1 verify status: 0x{:04x}",
+                            verify.flag
+                        ));
                     }
                 }
                 Err(e) => {
@@ -121,10 +127,15 @@ impl<'a> BootDownload<'a> {
                     .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
                 let verify = ctx
-                    .fes_verify_status(0x7f04)
+                    .fes_verify_status(fes_data_type::BOOT0)
                     .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
                 if verify.flag == EFEX_CRC32_VALID_FLAG {
                     self.logger.stage_complete("Boot0 verified");
+                } else {
+                    self.logger.warn(&format!(
+                        "Boot0 verify status: 0x{:04x}",
+                        verify.flag
+                    ));
                 }
             }
         }
