@@ -73,10 +73,8 @@ pub async fn event_loop(tx: mpsc::UnboundedSender<AppEvent>) {
         if has_event {
             if let Ok(evt) = tokio::task::block_in_place(event::read) {
                 match evt {
-                    Event::Key(key) => {
-                        if tx.send(AppEvent::Key(key)).is_err() {
-                            return;
-                        }
+                    Event::Key(key) if tx.send(AppEvent::Key(key)).is_err() => {
+                        return;
                     }
                     Event::Resize(_, _) => {
                         // ratatui handles resize automatically on next draw
