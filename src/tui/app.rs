@@ -263,10 +263,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyho
                             app.show_help = true;
                         }
                         // Tab / Shift+Tab: toggle focus between Devices and Options
-                        KeyCode::Tab | KeyCode::BackTab => {
-                            if !app.is_flashing() {
-                                app.focus = app.focus.toggle();
-                            }
+                        KeyCode::Tab | KeyCode::BackTab if !app.is_flashing() => {
+                            app.focus = app.focus.toggle();
                         }
                         KeyCode::Char('r') if !app.is_flashing() => {
                             let scan_tx = tx.clone();
