@@ -193,6 +193,28 @@ impl OpenixPacker {
             .find(|fh| fh.maintype_str() == maintype && fh.subtype_str() == subtype)
     }
 
+    /// Find file header by sub type (ignores main type)
+    pub fn find_file_header_by_subtype(&self, subtype: &str) -> Option<&FileHeader> {
+        self.file_headers.iter().find(|fh| fh.subtype_str() == subtype)
+    }
+
+    /// Find file data by sub type (ignores main type)
+    pub fn find_file_data_by_subtype(&mut self, subtype: &str) -> Result<Vec<u8>, PackerError> {
+        if !self.image_loaded {
+            return Err(PackerError::ImageNotLoaded);
+        }
+
+        let header_version = self.get_header_version();
+        let file_header = self
+            .find_file_header_by_subtype(subtype)
+            .ok_or_else(|| PackerError::FileNotFound(subtype.to_string()))?;
+
+        self.read_data_at_offset(
+            file_header.offset(header_version),
+            file_header.original_length(header_version),
+        )
+    }
+
     /// Get file data by filename
     pub fn get_file_data_by_filename(&mut self, filename: &str) -> Result<Vec<u8>, PackerError> {
         if !self.image_loaded {
