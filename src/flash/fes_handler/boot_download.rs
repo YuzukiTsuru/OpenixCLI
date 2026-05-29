@@ -76,6 +76,7 @@ impl<'a> BootDownload<'a> {
                         "Boot1 not found: {}/{} - {}",
                         maintype, subtype, e
                     ));
+                    return Err(FlashError::Boot1NotFound);
                 }
             }
         }
@@ -92,31 +93,36 @@ impl<'a> BootDownload<'a> {
         secure: u32,
         storage_type: u32,
     ) -> FlashResult<()> {
-        if let Some((maintype, subtype)) = self.get_boot0_subtype(secure, storage_type) {
-            self.logger
-                .debug(&format!("Looking for Boot0: {}/{}", maintype, subtype));
+        if let Some(subtype) = self.get_boot0_subtype(secure, storage_type) {
+            self.logger.debug(&format!("Looking for Boot0: {}", subtype));
+
             let boot0_data = packer
-                .get_file_data_by_maintype_subtype(maintype, subtype)
+                .find_file_data_by_subtype(subtype)
                 .or_else(|_| {
-                    if let Some((m, s)) = self.get_boot0_subtype(secure, 0) {
-                        packer.get_file_data_by_maintype_subtype(m, s)
+                    if let Some(s) = self.get_boot0_subtype(secure, 0) {
+                        packer.find_file_data_by_subtype(s)
                     } else {
                         Err(PackerError::FileNotFound(subtype.to_string()))
                     }
                 });
 
-            if let Ok(boot0_data) = boot0_data {
-                self.logger.info(&format!(
-                    "Downloading Boot0: {}/{} ({} bytes)",
-                    maintype,
-                    subtype,
-                    boot0_data.len()
-                ));
+            match boot0_data {
+                Ok(boot0_data) => {
+                    self.logger.info(&format!(
+                        "Downloading Boot0: {} ({} bytes)",
+                        subtype,
+                        boot0_data.len()
+                    ));
 
-                ctx.fes_down(&boot0_data, 0, FesDataType::Boot0)
-                    .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+                    ctx.fes_down(&boot0_data, 0, FesDataType::Boot0)
+                        .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-                self.verify_boot(ctx, fes_data_type::BOOT0, "Boot0").await?;
+                    self.verify_boot(ctx, fes_data_type::BOOT0, "Boot0").await?;
+                }
+                Err(e) => {
+                    self.logger.debug(&format!("Boot0 not found: {} - {}", subtype, e));
+                    return Err(FlashError::Boot0NotFound);
+                }
             }
         }
         Ok(())
@@ -164,29 +170,25 @@ impl<'a> BootDownload<'a> {
     }
 
     /// Get Boot0 subtype based on boot mode and storage type
-    fn get_boot0_subtype(
-        &self,
-        secure: u32,
-        storage_type: u32,
-    ) -> Option<(&'static str, &'static str)> {
+    fn get_boot0_subtype(&self, secure: u32, storage_type: u32) -> Option<&'static str> {
         if secure == BOOT_FILE_MODE_NORMAL || secure == BOOT_FILE_MODE_PKG {
             match StorageType::from(storage_type) {
-                StorageType::Nand | StorageType::Spinand => Some(("BOOT    ", "BOOT0_0000000000")),
+                StorageType::Nand | StorageType::Spinand => Some("BOOT0_0000000000"),
                 StorageType::Sdcard
                 | StorageType::Emmc
                 | StorageType::Emmc3
-                | StorageType::Emmc0 => Some(("12345678", "1234567890BOOT_0")),
-                StorageType::Spinor => Some(("12345678", "1234567890BNOR_0")),
-                StorageType::Ufs => Some(("12345678", "1234567890BUFS_0")),
-                _ => Some(("12345678", "1234567890BOOT_0")),
+                | StorageType::Emmc0 => Some("1234567890BOOT_0"),
+                StorageType::Spinor => Some("1234567890BNOR_0"),
+                StorageType::Ufs => Some("1234567890BUFS_0"),
+                _ => Some("1234567890BOOT_0"),
             }
         } else {
             match StorageType::from(storage_type) {
-                StorageType::Sdcard | StorageType::Sd1 => Some(("12345678", "TOC0_SDCARD00000")),
-                StorageType::Nand | StorageType::Spinand => Some(("12345678", "TOC0_NAND0000000")),
-                StorageType::Spinor => Some(("12345678", "TOC0_SPINOR00000")),
-                StorageType::Ufs => Some(("12345678", "TOC0_UFS00000000")),
-                _ => Some(("12345678", "TOC0_00000000000")),
+                StorageType::Sdcard | StorageType::Sd1 => Some("TOC0_SDCARD00000"),
+                StorageType::Nand | StorageType::Spinand => Some("TOC0_NAND0000000"),
+                StorageType::Spinor => Some("TOC0_SPINOR00000"),
+                StorageType::Ufs => Some("TOC0_UFS00000000"),
+                _ => Some("TOC0_00000000000"),
             }
         }
     }
