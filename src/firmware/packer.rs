@@ -195,7 +195,9 @@ impl OpenixPacker {
 
     /// Find file header by sub type (ignores main type)
     pub fn find_file_header_by_subtype(&self, subtype: &str) -> Option<&FileHeader> {
-        self.file_headers.iter().find(|fh| fh.subtype_str() == subtype)
+        self.file_headers
+            .iter()
+            .find(|fh| fh.subtype_str() == subtype)
     }
 
     /// Find file data by sub type (ignores main type)
