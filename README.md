@@ -40,6 +40,18 @@ The compiled binary will be available at `target/release/openixcli`.
 
 ## Usage
 
+Launch the interactive TUI:
+
+```bash
+openixcli
+```
+
+You can also launch it explicitly:
+
+```bash
+openixcli tui
+```
+
 ### Scan for Devices
 
 List all connected Allwinner devices:
@@ -120,6 +132,8 @@ OpenixCLI/
 │   ├── config/        # Configuration parsing (MBR, sys_config)
 │   ├── firmware/      # Firmware image handling
 │   ├── flash/         # Flashing logic (FEL/FES handlers)
+│   ├── process/       # Stage and progress tracking
+│   ├── tui/           # Interactive terminal UI
 │   ├── utils/         # Utilities (logging, errors)
 │   ├── cli.rs         # CLI argument definitions
 │   ├── lib.rs         # Library exports
@@ -127,6 +141,8 @@ OpenixCLI/
 ├── Cargo.toml
 └── LICENSE
 ```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the current module responsibilities and flash flow.
 
 ## License
 

@@ -3,7 +3,7 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::commands::FlashMode;
+use crate::flash::{FlashMode, PostAction};
 
 /// Which option row is focused inside the firmware panel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,48 +66,6 @@ pub struct FirmwareState {
     pub focused_field: FirmwareField,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum PostAction {
-    Reboot,
-    PowerOff,
-    Shutdown,
-}
-
-impl PostAction {
-    pub fn name(&self) -> &'static str {
-        match self {
-            PostAction::Reboot => "Reboot",
-            PostAction::PowerOff => "Power Off",
-            PostAction::Shutdown => "Shutdown",
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PostAction::Reboot => "reboot",
-            PostAction::PowerOff => "poweroff",
-            PostAction::Shutdown => "shutdown",
-        }
-    }
-
-    pub fn next(&self) -> Self {
-        match self {
-            PostAction::Reboot => PostAction::PowerOff,
-            PostAction::PowerOff => PostAction::Shutdown,
-            PostAction::Shutdown => PostAction::Reboot,
-        }
-    }
-
-    pub fn prev(&self) -> Self {
-        match self {
-            PostAction::Reboot => PostAction::Shutdown,
-            PostAction::PowerOff => PostAction::Reboot,
-            PostAction::Shutdown => PostAction::PowerOff,
-        }
-    }
-}
-
 impl Default for FirmwareState {
     fn default() -> Self {
         Self {
@@ -129,30 +87,15 @@ impl Default for FirmwareState {
 
 impl FirmwareState {
     pub fn mode_display(&self) -> &'static str {
-        match self.mode {
-            FlashMode::Partition => "Partition",
-            FlashMode::KeepData => "Keep Data",
-            FlashMode::PartitionErase => "Part. Erase",
-            FlashMode::FullErase => "Full Erase",
-        }
+        self.mode.display_name()
     }
 
     pub fn next_mode(&mut self) {
-        self.mode = match self.mode {
-            FlashMode::FullErase => FlashMode::PartitionErase,
-            FlashMode::PartitionErase => FlashMode::KeepData,
-            FlashMode::KeepData => FlashMode::Partition,
-            FlashMode::Partition => FlashMode::FullErase,
-        };
+        self.mode = self.mode.next();
     }
 
     pub fn prev_mode(&mut self) {
-        self.mode = match self.mode {
-            FlashMode::FullErase => FlashMode::Partition,
-            FlashMode::Partition => FlashMode::KeepData,
-            FlashMode::KeepData => FlashMode::PartitionErase,
-            FlashMode::PartitionErase => FlashMode::FullErase,
-        };
+        self.mode = self.mode.prev();
     }
 
     /// Whether the Parts field should be navigable

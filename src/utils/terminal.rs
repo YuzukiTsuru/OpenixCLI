@@ -9,25 +9,24 @@ use indicatif::MultiProgress;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::Lazy;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 /// Global MultiProgress instance
 static MULTI_PROGRESS: Lazy<Arc<MultiProgress>> = Lazy::new(crate::process::multi_progress);
 
-/// Verbose mode flag (unsafe for thread safety)
-static mut VERBOSE_MODE: bool = false;
+/// Verbose mode flag.
+static VERBOSE_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Set verbose mode
 pub fn set_verbose(verbose: bool) {
-    unsafe {
-        VERBOSE_MODE = verbose;
-    }
+    VERBOSE_MODE.store(verbose, Ordering::SeqCst);
 }
 
 /// Check if verbose mode is enabled
 pub fn is_verbose() -> bool {
-    unsafe { VERBOSE_MODE }
+    VERBOSE_MODE.load(Ordering::SeqCst)
 }
 
 /// TUI log message with level and text

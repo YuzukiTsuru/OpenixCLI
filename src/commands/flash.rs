@@ -1,7 +1,8 @@
 //! Flash command implementation
 
 use crate::commands::FlashArgs;
-use crate::flash::{FlashMode, FlashOptions, Flasher};
+use crate::firmware::LoadedFirmware;
+use crate::flash::Flasher;
 use crate::utils::logger::Logger;
 
 /// Execute the flash command
@@ -29,10 +30,9 @@ pub async fn execute(args: FlashArgs) -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("Firmware file not found"));
     }
 
-    let mut packer = crate::firmware::OpenixPacker::new();
-    packer.load(&args.firmware_path)?;
+    let loaded = LoadedFirmware::load(&args.firmware_path)?;
 
-    let image_info = packer.get_image_info();
+    let image_info = loaded.image_info();
     logger.info(&format!(
         "Firmware size: {} MB, {} files",
         image_info.image_size / (1024 * 1024),
@@ -45,21 +45,9 @@ pub async fn execute(args: FlashArgs) -> anyhow::Result<()> {
         logger.info("No device specified, will use first available device");
     }
 
-    let options = FlashOptions {
-        bus: args.bus,
-        port: args.port,
-        verify: args.verify,
-        mode: match args.mode {
-            crate::commands::FlashMode::Partition => FlashMode::Partition,
-            crate::commands::FlashMode::KeepData => FlashMode::KeepData,
-            crate::commands::FlashMode::PartitionErase => FlashMode::PartitionErase,
-            crate::commands::FlashMode::FullErase => FlashMode::FullErase,
-        },
-        partitions: args.partitions,
-        post_action: args.post_action,
-    };
+    let request = args.request();
 
-    let mut flasher = Flasher::new(packer, options, logger.clone());
+    let mut flasher = Flasher::new(loaded.into_packer(), request, logger.clone());
     if let Err(e) = flasher.execute().await {
         logger.error(&format!("Flash failed: {}", e));
         return Err(anyhow::anyhow!("{}", e));
