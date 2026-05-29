@@ -6,4 +6,4 @@ pub mod flash;
 pub mod scan;
 pub mod types;
 
-pub use types::{FlashArgs, FlashMode};
+pub use types::{parse_partition_list, FlashArgs};

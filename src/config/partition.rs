@@ -76,6 +76,10 @@ impl OpenixPartition {
 
             if line.starts_with('[') && line.ends_with(']') {
                 if line != "[partition]" && line != "[partition_start]" && line != "[mbr]" {
+                    if in_partition_section && !current_partition.name.is_empty() {
+                        self.partitions.push(current_partition.clone());
+                        current_partition = PartitionConfig::default();
+                    }
                     in_partition_section = false;
                 }
                 continue;
@@ -143,5 +147,70 @@ impl OpenixPartition {
 impl Default for OpenixPartition {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multiple_partition_blocks() {
+        let data = br#"
+            ; comment
+            [partition_start]
+            [partition]
+            name = boot
+            size = 0x4000
+            downloadfile = "boot.fex"
+            user_type = 0x8000
+            keydata = 1
+            encrypt = 0
+            verify = 1
+            ro = 1
+
+            [partition]
+            name = system
+            size = 8192
+            downloadfile = system.img
+        "#;
+
+        let mut parser = OpenixPartition::new();
+        assert!(parser.parse_from_data(data));
+
+        let partitions = parser.get_partitions();
+        assert_eq!(partitions.len(), 2);
+        assert_eq!(partitions[0].name, "boot");
+        assert_eq!(partitions[0].size, 0x4000);
+        assert_eq!(partitions[0].downloadfile, "boot.fex");
+        assert_eq!(partitions[0].user_type, 0x8000);
+        assert!(partitions[0].keydata);
+        assert!(!partitions[0].encrypt);
+        assert!(partitions[0].verify);
+        assert!(partitions[0].readonly);
+        assert_eq!(partitions[1].name, "system");
+        assert_eq!(partitions[1].size, 8192);
+    }
+
+    #[test]
+    fn ignores_lines_outside_partition_sections() {
+        let data = br#"
+            [mbr]
+            name = ignored
+            [partition_start]
+            [partition]
+            name = vendor
+            downloadfile = vendor.img
+            [other]
+            name = ignored-too
+        "#;
+
+        let mut parser = OpenixPartition::new();
+        assert!(parser.parse_from_data(data));
+
+        let partitions = parser.get_partitions();
+        assert_eq!(partitions.len(), 1);
+        assert_eq!(partitions[0].name, "vendor");
+        assert_eq!(partitions[0].downloadfile, "vendor.img");
     }
 }

@@ -41,16 +41,21 @@ pub enum AppEvent {
     Tick,
     /// Flash stage started
     FlashStageStart(StageType),
+    /// Flash stages were defined
+    FlashStagesDefined(Vec<StageType>),
     /// Flash progress update
     FlashProgress {
+        overall_percent: f64,
         stage_progress: u64,
         total: u64,
         speed: f64,
     },
+    /// Total bytes for partition stage
+    FlashPartitionStageWeight(u64),
     /// Flash partition started
     FlashPartitionStart(String),
     /// Flash stage completed
-    FlashStageComplete,
+    FlashStageComplete(StageType),
     /// Flash operation completed successfully
     FlashDone,
     /// Flash operation failed

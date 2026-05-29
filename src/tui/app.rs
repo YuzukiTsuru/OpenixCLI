@@ -11,8 +11,7 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use tokio::sync::mpsc;
 
-use crate::process::global_progress::{global_progress, set_tui_mode};
-use crate::utils::terminal::{self, TuiLogLevel, TuiLogMessage};
+use crate::process::global_progress::set_tui_mode;
 
 use super::bridge;
 use super::event::{AppEvent, DeviceInfo, LogLevel};
@@ -109,35 +108,6 @@ impl App {
             self.state = AppState::Idle;
         }
     }
-
-    /// Poll GlobalProgress and update TUI progress state
-    fn poll_progress(&mut self) {
-        let gp = global_progress();
-        let snap = gp.snapshot();
-
-        self.progress.overall_percent = snap.precise_progress;
-        self.progress.stage_progress = snap.stage_progress;
-        self.progress.stage_total = snap.total_bytes;
-        self.progress.speed = snap.speed;
-
-        if !snap.current_partition.is_empty() {
-            self.progress.current_partition = snap.current_partition;
-        }
-
-        // Update current stage and completed stages from snapshot
-        if snap.current_stage_index < snap.stages.len() {
-            let current = snap.stages[snap.current_stage_index].stage_type;
-            self.progress.current_stage = Some(current);
-            self.progress.stage_index = snap.current_stage_index;
-        }
-
-        self.progress.completed_stages.clear();
-        for stage_info in &snap.stages {
-            if stage_info.completed {
-                self.progress.completed_stages.push(stage_info.stage_type);
-            }
-        }
-    }
 }
 
 /// Run the TUI application
@@ -160,7 +130,6 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Disable TUI mode
     set_tui_mode(false);
-    terminal::set_tui_log_sender(None);
 
     result
 }
@@ -169,10 +138,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyho
     let mut app = App::new();
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
-
-    // Set up TUI log channel to capture log messages from flash/scan operations
-    let (log_tx, mut log_rx) = mpsc::unbounded_channel::<TuiLogMessage>();
-    terminal::set_tui_log_sender(Some(log_tx));
 
     // Welcome message
     app.log
@@ -193,24 +158,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyho
     });
 
     loop {
-        // Drain TUI log channel → app.log
-        while let Ok(msg) = log_rx.try_recv() {
-            let level = match msg.level {
-                TuiLogLevel::Info => LogLevel::Info,
-                TuiLogLevel::Success => LogLevel::Success,
-                TuiLogLevel::Warn => LogLevel::Warn,
-                TuiLogLevel::Error => LogLevel::Error,
-                TuiLogLevel::Debug => LogLevel::Debug,
-            };
-            app.log.push(level, msg.message);
-        }
-
         // Update progress during flash
         if app.state == AppState::Flashing {
             if let Some(start) = app.flash_start_time {
                 app.progress.elapsed_secs = start.elapsed().as_secs();
             }
-            app.poll_progress();
         }
 
         // Draw
@@ -389,24 +341,31 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyho
                     app.log
                         .push(LogLevel::Info, format!("Stage: {}", stage.name()));
                 }
+                AppEvent::FlashStagesDefined(stages) => {
+                    app.progress.all_stages = stages;
+                }
                 AppEvent::FlashProgress {
+                    overall_percent,
                     stage_progress,
                     total,
                     speed,
                 } => {
+                    app.progress.overall_percent = overall_percent;
                     app.progress.stage_progress = stage_progress;
                     app.progress.stage_total = total;
                     app.progress.speed = speed;
+                }
+                AppEvent::FlashPartitionStageWeight(total) => {
+                    app.progress.stage_total = total;
+                    app.progress.stage_progress = 0;
                 }
                 AppEvent::FlashPartitionStart(name) => {
                     app.progress.current_partition = name.clone();
                     app.log.push(LogLevel::Info, format!("Flashing: {}", name));
                 }
-                AppEvent::FlashStageComplete => {
-                    if let Some(stage) = app.progress.current_stage {
-                        if !app.progress.completed_stages.contains(&stage) {
-                            app.progress.completed_stages.push(stage);
-                        }
+                AppEvent::FlashStageComplete(stage) => {
+                    if !app.progress.completed_stages.contains(&stage) {
+                        app.progress.completed_stages.push(stage);
                     }
                 }
                 AppEvent::FlashDone => {
@@ -535,7 +494,7 @@ fn start_flash(app: &mut App, tx: &mpsc::UnboundedSender<AppEvent>) {
     let mode = app.firmware.mode;
     let verify = app.firmware.verify;
     let partitions = app.firmware.selected_partition_names();
-    let post_action = app.firmware.post_action.as_str().to_string();
+    let post_action = app.firmware.post_action;
 
     // Reset progress and state
     app.progress.reset();

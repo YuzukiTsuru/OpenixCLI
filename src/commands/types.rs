@@ -3,7 +3,8 @@
 //! Defines types and structures used by CLI commands
 
 use std::path::PathBuf;
-use std::str::FromStr;
+
+use crate::flash::{DeviceSelector, FlashMode, FlashRequest, PostAction};
 
 /// Arguments for the flash command
 ///
@@ -23,46 +24,67 @@ pub struct FlashArgs {
     pub verify: bool,
     pub mode: FlashMode,
     pub partitions: Option<Vec<String>>,
-    pub post_action: String,
+    pub post_action: PostAction,
     pub verbose: bool,
 }
 
-/// Flash mode options
-///
-/// # Variants
-/// * `Partition` - Flash only specified partitions
-/// * `KeepData` - Keep existing data
-/// * `PartitionErase` - Erase partitions before flashing
-/// * `FullErase` - Erase all data before flashing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FlashMode {
-    Partition,
-    KeepData,
-    PartitionErase,
-    FullErase,
-}
-
-impl FromStr for FlashMode {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "partition" => Ok(Self::Partition),
-            "keep_data" => Ok(Self::KeepData),
-            "partition_erase" => Ok(Self::PartitionErase),
-            "full_erase" => Ok(Self::FullErase),
-            _ => Err(format!("Invalid flash mode: {}", s)),
-        }
+impl FlashArgs {
+    pub fn request(&self) -> FlashRequest {
+        FlashRequest::new(
+            DeviceSelector::new(self.bus, self.port),
+            self.verify,
+            self.mode,
+            self.partitions.clone(),
+            self.post_action,
+        )
     }
 }
 
-impl std::fmt::Display for FlashMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FlashMode::Partition => write!(f, "partition"),
-            FlashMode::KeepData => write!(f, "keep_data"),
-            FlashMode::PartitionErase => write!(f, "partition_erase"),
-            FlashMode::FullErase => write!(f, "full_erase"),
-        }
+pub fn parse_partition_list(partitions: Option<String>) -> Option<Vec<String>> {
+    partitions.map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_partition_list_trims_and_drops_empty_values() {
+        assert_eq!(
+            parse_partition_list(Some(" boot, system ,,vendor ".to_string())),
+            Some(vec![
+                "boot".to_string(),
+                "system".to_string(),
+                "vendor".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn flash_args_builds_shared_request() {
+        let args = FlashArgs {
+            firmware_path: PathBuf::from("firmware.img"),
+            bus: Some(1),
+            port: Some(2),
+            verify: false,
+            mode: FlashMode::Partition,
+            partitions: Some(vec!["boot".to_string()]),
+            post_action: PostAction::PowerOff,
+            verbose: true,
+        };
+
+        let request = args.request();
+        assert_eq!(request.device.selected_pair(), Some((1, 2)));
+        assert_eq!(request.mode, FlashMode::Partition);
+        assert_eq!(request.post_action, PostAction::PowerOff);
+        assert!(!request.verify);
+        assert_eq!(request.partitions, Some(vec!["boot".to_string()]));
     }
 }

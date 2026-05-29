@@ -2,7 +2,7 @@
 //!
 //! Provides a simplified interface for reporting flash operation progress
 
-use super::global_progress::{global_progress, StageType};
+use super::global_progress::{global_progress, ProgressSnapshot, StageType};
 use std::sync::Arc;
 
 /// Progress reporter
@@ -74,6 +74,20 @@ impl ProgressReporter {
     /// Get current progress percentage (0-100)
     pub fn get_progress(&self) -> u8 {
         self.progress.get_progress()
+    }
+
+    /// Get the current progress snapshot.
+    pub fn snapshot(&self) -> ProgressSnapshot {
+        self.progress.snapshot()
+    }
+
+    /// Get the current stage if one is defined.
+    pub fn current_stage(&self) -> Option<StageType> {
+        let snapshot = self.progress.snapshot();
+        snapshot
+            .stages
+            .get(snapshot.current_stage_index)
+            .map(|stage| stage.stage_type)
     }
 }
 

@@ -117,7 +117,6 @@ pub struct ProgressSnapshot {
     pub stage_progress: u64,
     pub total_bytes: u64,
     pub speed: f64,
-    pub current_partition: String,
     pub current_stage_index: usize,
     pub stages: Vec<StageInfo>,
 }
@@ -146,7 +145,6 @@ impl GlobalProgress {
     /// Take a snapshot of current progress state (for TUI polling)
     pub fn snapshot(&self) -> ProgressSnapshot {
         let stages = self.stages.lock().unwrap().clone();
-        let partition = self.current_partition.lock().unwrap().clone();
         let speed = *self.current_speed.lock().unwrap();
         let precise = *self.precise_progress.lock().unwrap();
 
@@ -155,7 +153,6 @@ impl GlobalProgress {
             stage_progress: self.stage_progress.load(Ordering::SeqCst),
             total_bytes: self.total_bytes.load(Ordering::SeqCst),
             speed,
-            current_partition: partition,
             current_stage_index: self.current_stage.load(Ordering::SeqCst),
             stages,
         }

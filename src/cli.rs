@@ -4,6 +4,8 @@
 
 use clap::{Parser, Subcommand};
 
+use crate::flash::{FlashMode, PostAction};
+
 /// Main CLI structure
 ///
 /// # Fields
@@ -51,7 +53,8 @@ pub enum Commands {
         #[arg(
             short = 'V',
             long,
-            default_value = "true",
+            default_value_t = true,
+            action = clap::ArgAction::Set,
             help = "Enable verification after write"
         )]
         verify: bool,
@@ -67,7 +70,7 @@ pub enum Commands {
             default_value = "full_erase",
             help = "Flash mode: partition, keep_data, partition_erase, full_erase"
         )]
-        mode: String,
+        mode: FlashMode,
 
         /// Partitions to flash (comma-separated)
         #[arg(short = 'p', long, help = "Partitions to flash (comma-separated)")]
@@ -83,7 +86,7 @@ pub enum Commands {
             default_value = "reboot",
             help = "Post-flash action: reboot, poweroff, shutdown"
         )]
-        post_action: String,
+        post_action: PostAction,
     },
 
     /// Launch interactive TUI mode

@@ -5,61 +5,19 @@
 
 #![allow(dead_code)]
 
+pub mod events;
 pub mod fel_handler;
 pub mod fes_handler;
+pub mod request;
 
+pub use events::{FlashEvent, FlashEventSink, FlashLogLevel};
 pub use fel_handler::FelHandler;
 pub use fes_handler::FesHandler;
+pub use request::{DeviceSelector, FlashMode, FlashRequest, PostAction};
 
 use crate::firmware::OpenixPacker;
 use crate::process::{FlashStages, StageType};
 use crate::utils::{FlashError, FlashResult, Logger};
-
-/// Flash mode options
-///
-/// # Variants
-/// * `Partition` - Flash only specified partitions
-/// * `KeepData` - Keep existing data
-/// * `PartitionErase` - Erase partitions before flashing
-/// * `FullErase` - Erase all data before flashing
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FlashMode {
-    Partition,
-    KeepData,
-    PartitionErase,
-    FullErase,
-}
-
-impl FlashMode {
-    /// Get erase flag for this mode
-    pub fn erase_flag(&self) -> u32 {
-        match self {
-            FlashMode::Partition => 0x0,
-            FlashMode::KeepData => 0x0,
-            FlashMode::PartitionErase => 0x1,
-            FlashMode::FullErase => 0x12,
-        }
-    }
-}
-
-/// Flash options configuration
-///
-/// # Fields
-/// * `bus` - USB bus number (optional)
-/// * `port` - USB port number (optional)
-/// * `verify` - Enable verification after write
-/// * `mode` - Flash mode
-/// * `partitions` - Specific partitions to flash (optional)
-/// * `post_action` - Action after flashing
-#[derive(Debug, Clone)]
-pub struct FlashOptions {
-    pub bus: Option<u8>,
-    pub port: Option<u8>,
-    pub verify: bool,
-    pub mode: FlashMode,
-    pub partitions: Option<Vec<String>>,
-    pub post_action: String,
-}
 
 /// Main flash controller
 ///
@@ -67,16 +25,16 @@ pub struct FlashOptions {
 /// FES handling, and partition flashing
 pub struct Flasher {
     packer: OpenixPacker,
-    options: FlashOptions,
+    request: FlashRequest,
     logger: Logger,
 }
 
 impl Flasher {
     /// Create a new flasher instance
-    pub fn new(packer: OpenixPacker, options: FlashOptions, logger: Logger) -> Self {
+    pub fn new(packer: OpenixPacker, request: FlashRequest, logger: Logger) -> Self {
         Self {
             packer,
-            options,
+            request,
             logger,
         }
     }
@@ -88,7 +46,40 @@ impl Flasher {
     pub async fn execute(&mut self) -> FlashResult<()> {
         let fes_data = self.packer.get_fes().map_err(|_| FlashError::FesNotFound)?;
 
-        let mut ctx = if let (Some(bus), Some(port)) = (self.options.bus, self.options.port) {
+        let mut ctx = self.open_device()?;
+
+        let mode = ctx.get_device_mode();
+        self.logger.info(&format!("Device mode: {:?}", mode));
+
+        let has_fel = mode == libefex::DeviceMode::Fel;
+
+        let stages = if has_fel {
+            FlashStages::for_fel_mode()
+        } else {
+            FlashStages::for_fes_mode()
+        };
+        self.logger.define_stages(stages.stages());
+
+        self.logger.start_global_progress();
+
+        self.logger.begin_stage(StageType::Init);
+        self.logger
+            .info(&format!("FES data loaded ({} bytes)", fes_data.len()));
+        self.logger.complete_stage();
+
+        if has_fel {
+            ctx = self.prepare_fel_mode(ctx, &fes_data).await?;
+        }
+
+        self.run_fes_mode(&ctx).await?;
+        self.apply_post_action(&ctx).await?;
+
+        Ok(())
+    }
+
+    /// Open the selected device, or the first detected device when no full selector is provided.
+    fn open_device(&self) -> FlashResult<libefex::Context> {
+        let mut ctx = if let Some((bus, port)) = self.request.device.selected_pair() {
             let mut ctx = libefex::Context::new();
             ctx.scan_usb_device_at(bus, port)
                 .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
@@ -113,81 +104,72 @@ impl Flasher {
         ctx.efex_init()
             .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
 
-        let mode = ctx.get_device_mode();
-        self.logger.info(&format!("Device mode: {:?}", mode));
+        Ok(ctx)
+    }
 
-        let has_fel = mode == libefex::DeviceMode::Fel;
-
-        if has_fel {
-            let stages = FlashStages::for_fel_mode();
-            self.logger.define_stages(stages.stages());
-        } else {
-            let stages = FlashStages::for_fes_mode();
-            self.logger.define_stages(stages.stages());
-        }
-
-        self.logger.start_global_progress();
-
-        self.logger.begin_stage(StageType::Init);
-        self.logger
-            .info(&format!("FES data loaded ({} bytes)", fes_data.len()));
+    async fn prepare_fel_mode(
+        &mut self,
+        mut ctx: libefex::Context,
+        fes_data: &[u8],
+    ) -> FlashResult<libefex::Context> {
+        self.logger.begin_stage(StageType::FelDram);
+        let fel_handler = FelHandler::new(&self.logger);
+        fel_handler.handle(&mut ctx, fes_data).await?;
         self.logger.complete_stage();
 
-        if has_fel {
-            self.logger.begin_stage(StageType::FelDram);
-            let fel_handler = FelHandler::new(&self.logger);
-            fel_handler.handle(&mut ctx, &fes_data).await?;
-            self.logger.complete_stage();
+        self.logger.begin_stage(StageType::FelUboot);
 
-            self.logger.begin_stage(StageType::FelUboot);
+        let uboot_data = self
+            .packer
+            .get_uboot()
+            .map_err(|_| FlashError::UbootNotFound)?;
 
-            let uboot_data = self
-                .packer
-                .get_uboot()
-                .map_err(|_| FlashError::UbootNotFound)?;
+        let dtb_data = self.packer.get_dtb().ok();
 
-            let dtb_data = self.packer.get_dtb().ok();
+        let sysconfig_data = self
+            .packer
+            .get_sys_config_bin()
+            .map_err(|_| FlashError::SysConfigNotFound)?;
 
-            let sysconfig_data = self
-                .packer
-                .get_sys_config_bin()
-                .map_err(|_| FlashError::SysConfigNotFound)?;
+        let board_config_data = self.packer.get_board_config().ok();
 
-            let board_config_data = self.packer.get_board_config().ok();
-
-            fel_handler
-                .download_uboot(
-                    &ctx,
-                    &uboot_data,
-                    dtb_data.as_deref(),
-                    &sysconfig_data,
-                    board_config_data.as_deref(),
-                )
-                .await?;
-
-            self.logger
-                .info(&format!("U-Boot downloaded ({} bytes)", uboot_data.len()));
-            self.logger.complete_stage();
-
-            self.logger.begin_stage(StageType::FelReconnect);
-
-            ctx = self.reconnect_device().await?;
-
-            self.logger.complete_stage();
-        }
-
-        let mut fes_handler = FesHandler::new(&mut self.logger);
-
-        fes_handler
-            .handle(&ctx, &mut self.packer, &self.options)
+        fel_handler
+            .download_uboot(
+                &ctx,
+                &uboot_data,
+                dtb_data.as_deref(),
+                &sysconfig_data,
+                board_config_data.as_deref(),
+            )
             .await?;
 
-        self.logger.finish_progress();
+        self.logger
+            .info(&format!("U-Boot downloaded ({} bytes)", uboot_data.len()));
+        self.logger.complete_stage();
 
-        self.set_device_mode(&ctx).await?;
+        self.logger.begin_stage(StageType::FelReconnect);
+        let ctx = self.reconnect_device().await?;
+        self.logger.complete_stage();
+
+        Ok(ctx)
+    }
+
+    async fn run_fes_mode(&mut self, ctx: &libefex::Context) -> FlashResult<()> {
+        let mut fes_handler = FesHandler::new(&mut self.logger);
+        fes_handler
+            .handle(ctx, &mut self.packer, &self.request)
+            .await
+    }
+
+    async fn apply_post_action(&self, ctx: &libefex::Context) -> FlashResult<()> {
+        self.logger.begin_stage(StageType::FesMode);
+        self.set_device_mode(ctx).await?;
+        self.logger.complete_stage();
 
         self.logger
-            .stage_complete(&format!("Device will {}", self.options.post_action));
+            .stage_complete(&format!("Device will {}", self.request.post_action));
+        self.logger.flash_finished(self.request.post_action);
+        self.logger.finish_progress();
 
         Ok(())
     }
@@ -245,12 +227,7 @@ impl Flasher {
 
     /// Set device mode after flashing
     async fn set_device_mode(&self, ctx: &libefex::Context) -> FlashResult<()> {
-        let tool_mode = match self.options.post_action.as_str() {
-            "reboot" => libefex::FesToolMode::Reboot,
-            "poweroff" => libefex::FesToolMode::PowerOff,
-            "shutdown" => libefex::FesToolMode::PowerOff,
-            _ => libefex::FesToolMode::Reboot,
-        };
+        let tool_mode = self.request.post_action.fes_tool_mode();
 
         ctx.fes_tool_mode(libefex::FesToolMode::Normal, tool_mode)
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;

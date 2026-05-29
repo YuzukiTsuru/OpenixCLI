@@ -3,13 +3,14 @@
 //! Provides functions to run scan and flash operations in background tasks,
 //! sending progress events back to the TUI event loop.
 
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::sync::mpsc;
 
-use crate::commands::types::FlashMode as CmdFlashMode;
-use crate::config::mbr_parser::SunxiMbr;
-use crate::firmware::OpenixPacker;
-use crate::flash::{FlashMode, FlashOptions, Flasher};
+use crate::firmware::{LoadedFirmware, OpenixPacker};
+use crate::flash::{
+    DeviceSelector, FlashEvent, FlashEventSink, FlashLogLevel, FlashMode, FlashRequest, Flasher,
+    PostAction,
+};
 
 use super::event::{AppEvent, DeviceInfo, LogLevel};
 
@@ -86,29 +87,15 @@ pub async fn scan_devices(tx: mpsc::UnboundedSender<AppEvent>) {
 }
 
 /// Load firmware file and return packer + metadata + partition names
-pub fn load_firmware(path: &PathBuf) -> Result<(OpenixPacker, u64, u32, Vec<String>), String> {
-    let mut packer = OpenixPacker::new();
-    packer
-        .load(path)
-        .map_err(|e| format!("Failed to load firmware: {}", e))?;
+pub fn load_firmware(path: &Path) -> Result<(OpenixPacker, u64, u32, Vec<String>), String> {
+    let loaded =
+        LoadedFirmware::load(path).map_err(|e| format!("Failed to load firmware: {}", e))?;
 
-    let info = packer.get_image_info();
+    let size = loaded.image_info().image_size as u64;
+    let num_files = loaded.image_info().num_files;
+    let partition_names = loaded.partition_names().to_vec();
 
-    // Extract partition names from MBR
-    let partition_names = match packer.get_mbr() {
-        Ok(mbr_data) => match SunxiMbr::parse(&mbr_data) {
-            Ok(mbr) => mbr.partitions.iter().map(|p| p.name.clone()).collect(),
-            Err(_) => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    };
-
-    Ok((
-        packer,
-        info.image_size as u64,
-        info.num_files,
-        partition_names,
-    ))
+    Ok((loaded.into_packer(), size, num_files, partition_names))
 }
 
 /// Run the flash operation in a background thread (not async spawn, because
@@ -119,39 +106,35 @@ pub async fn run_flash(
     packer: OpenixPacker,
     bus: Option<u8>,
     port: Option<u8>,
-    mode: CmdFlashMode,
+    mode: FlashMode,
     verify: bool,
     partitions: Option<Vec<String>>,
-    post_action: String,
+    post_action: PostAction,
 ) {
-    let flash_mode = match mode {
-        CmdFlashMode::Partition => FlashMode::Partition,
-        CmdFlashMode::KeepData => FlashMode::KeepData,
-        CmdFlashMode::PartitionErase => FlashMode::PartitionErase,
-        CmdFlashMode::FullErase => FlashMode::FullErase,
-    };
-
-    let options = FlashOptions {
-        bus,
-        port,
+    let request = FlashRequest::new(
+        DeviceSelector::new(bus, port),
         verify,
-        mode: flash_mode,
+        mode,
         partitions,
-        post_action: post_action.clone(),
-    };
+        post_action,
+    );
 
     let _ = tx.send(AppEvent::LogMessage(
         LogLevel::Info,
         "Starting flash...".into(),
     ));
 
-    let cli_logger = crate::utils::Logger::with_verbose(true);
+    let event_tx = tx.clone();
+    let event_sink = FlashEventSink::from_fn(move |event| {
+        send_flash_event(&event_tx, event);
+    });
+    let logger = crate::utils::Logger::for_events(true, event_sink);
 
     // Run the flash in spawn_blocking since libefex::Context is !Send
     let result = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
-            let mut flasher = Flasher::new(packer, options, cli_logger);
+            let mut flasher = Flasher::new(packer, request, logger);
             flasher.execute().await
         })
     })
@@ -178,6 +161,50 @@ pub async fn run_flash(
             let _ = tx.send(AppEvent::FlashError(msg.clone()));
             let _ = tx.send(AppEvent::LogMessage(LogLevel::Error, msg));
         }
+    }
+}
+
+fn send_flash_event(tx: &mpsc::UnboundedSender<AppEvent>, event: FlashEvent) {
+    match event {
+        FlashEvent::Log { level, message } => {
+            let level = match level {
+                FlashLogLevel::Info => LogLevel::Info,
+                FlashLogLevel::Success => LogLevel::Success,
+                FlashLogLevel::Warn => LogLevel::Warn,
+                FlashLogLevel::Error => LogLevel::Error,
+                FlashLogLevel::Debug => LogLevel::Debug,
+            };
+            let _ = tx.send(AppEvent::LogMessage(level, message));
+        }
+        FlashEvent::StagesDefined(stages) => {
+            let _ = tx.send(AppEvent::FlashStagesDefined(stages));
+        }
+        FlashEvent::StageStarted(stage) => {
+            let _ = tx.send(AppEvent::FlashStageStart(stage));
+        }
+        FlashEvent::StageCompleted(stage) => {
+            let _ = tx.send(AppEvent::FlashStageComplete(stage));
+        }
+        FlashEvent::PartitionStageWeight(total) => {
+            let _ = tx.send(AppEvent::FlashPartitionStageWeight(total));
+        }
+        FlashEvent::PartitionStarted(name) => {
+            let _ = tx.send(AppEvent::FlashPartitionStart(name));
+        }
+        FlashEvent::Progress {
+            overall_percent,
+            stage_progress,
+            total,
+            speed,
+        } => {
+            let _ = tx.send(AppEvent::FlashProgress {
+                overall_percent,
+                stage_progress,
+                total,
+                speed,
+            });
+        }
+        FlashEvent::Finished { .. } => {}
     }
 }
 
