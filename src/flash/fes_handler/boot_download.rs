@@ -94,17 +94,16 @@ impl<'a> BootDownload<'a> {
         storage_type: u32,
     ) -> FlashResult<()> {
         if let Some(subtype) = self.get_boot0_subtype(secure, storage_type) {
-            self.logger.debug(&format!("Looking for Boot0: {}", subtype));
+            self.logger
+                .debug(&format!("Looking for Boot0: {}", subtype));
 
-            let boot0_data = packer
-                .find_file_data_by_subtype(subtype)
-                .or_else(|_| {
-                    if let Some(s) = self.get_boot0_subtype(secure, 0) {
-                        packer.find_file_data_by_subtype(s)
-                    } else {
-                        Err(PackerError::FileNotFound(subtype.to_string()))
-                    }
-                });
+            let boot0_data = packer.find_file_data_by_subtype(subtype).or_else(|_| {
+                if let Some(s) = self.get_boot0_subtype(secure, 0) {
+                    packer.find_file_data_by_subtype(s)
+                } else {
+                    Err(PackerError::FileNotFound(subtype.to_string()))
+                }
+            });
 
             match boot0_data {
                 Ok(boot0_data) => {
@@ -120,7 +119,8 @@ impl<'a> BootDownload<'a> {
                     self.verify_boot(ctx, fes_data_type::BOOT0, "Boot0").await?;
                 }
                 Err(e) => {
-                    self.logger.debug(&format!("Boot0 not found: {} - {}", subtype, e));
+                    self.logger
+                        .debug(&format!("Boot0 not found: {} - {}", subtype, e));
                     return Err(FlashError::Boot0NotFound);
                 }
             }
