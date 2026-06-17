@@ -204,25 +204,31 @@ impl ImageHeader {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileHeaderV1 {
-    pub unknown_3: u32,
+    pub attr: u32,
     pub stored_length: u32,
     pub original_length: u32,
     pub offset: u32,
-    pub unknown: u32,
+    pub checksum: u32,
     pub filename: [u8; IMAGEWTY_FHDR_FILENAME_LEN],
 }
 
 /// File header version 3 structure
+///
+/// Version 3 stores the 64-bit offset/length fields as split `lo`/`hi` `u32`
+/// pairs, which allows representing files larger than 4 GiB.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct FileHeaderV3 {
-    pub unknown_0: u32,
+    pub attr: u32,
     pub filename: [u8; IMAGEWTY_FHDR_FILENAME_LEN],
-    pub stored_length: u32,
-    pub pad1: u32,
-    pub original_length: u32,
-    pub pad2: u32,
-    pub offset: u32,
+    pub stored_length_lo: u32,
+    pub stored_length_hi: u32,
+    pub original_length_lo: u32,
+    pub original_length_hi: u32,
+    pub offset_lo: u32,
+    pub offset_hi: u32,
+    pub unknown: [u8; 64],
+    pub checksum: u32,
 }
 
 /// Union for different file header versions
@@ -313,34 +319,37 @@ impl FileHeader {
     }
 
     /// Get stored length (compressed size)
-    pub fn stored_length(&self, header_version: u32) -> u32 {
+    pub fn stored_length(&self, header_version: u32) -> u64 {
         unsafe {
             if header_version == 0x0300 {
-                self.data.v3.stored_length
+                let v3 = self.data.v3;
+                (v3.stored_length_lo as u64) | ((v3.stored_length_hi as u64) << 32)
             } else {
-                self.data.v1.stored_length
+                self.data.v1.stored_length as u64
             }
         }
     }
 
     /// Get original length (uncompressed size)
-    pub fn original_length(&self, header_version: u32) -> u32 {
+    pub fn original_length(&self, header_version: u32) -> u64 {
         unsafe {
             if header_version == 0x0300 {
-                self.data.v3.original_length
+                let v3 = self.data.v3;
+                (v3.original_length_lo as u64) | ((v3.original_length_hi as u64) << 32)
             } else {
-                self.data.v1.original_length
+                self.data.v1.original_length as u64
             }
         }
     }
 
     /// Get offset in the firmware file
-    pub fn offset(&self, header_version: u32) -> u32 {
+    pub fn offset(&self, header_version: u32) -> u64 {
         unsafe {
             if header_version == 0x0300 {
-                self.data.v3.offset
+                let v3 = self.data.v3;
+                (v3.offset_lo as u64) | ((v3.offset_hi as u64) << 32)
             } else {
-                self.data.v1.offset
+                self.data.v1.offset as u64
             }
         }
     }
@@ -368,7 +377,7 @@ pub struct ImageInfo {
     pub header: ImageHeader,
     pub files: Vec<FileInfo>,
     pub is_encrypted: bool,
-    pub image_size: u32,
+    pub image_size: u64,
     pub num_files: u32,
 }
 
@@ -378,9 +387,9 @@ pub struct FileInfo {
     pub filename: String,
     pub maintype: String,
     pub subtype: String,
-    pub stored_length: u32,
-    pub original_length: u32,
-    pub offset: u32,
+    pub stored_length: u64,
+    pub original_length: u64,
+    pub offset: u64,
 }
 
 /// Storage type enumeration

@@ -91,7 +91,7 @@ pub fn load_firmware(path: &Path) -> Result<(OpenixPacker, u64, u32, Vec<String>
     let loaded =
         LoadedFirmware::load(path).map_err(|e| format!("Failed to load firmware: {}", e))?;
 
-    let size = loaded.image_info().image_size as u64;
+    let size = loaded.image_info().image_size;
     let num_files = loaded.image_info().num_files;
     let partition_names = loaded.partition_names().to_vec();
 
