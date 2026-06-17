@@ -464,7 +464,7 @@ impl<'a> SparseParser<'a> {
                         let download_size = if unenough_length < ALIGNMENT_SIZE as u32 {
                             this_rest_size + unenough_length as usize - ALIGNMENT_SIZE
                         } else {
-                            this_rest_size & !(SECTOR_SIZE as usize - 1)
+                            this_rest_size & !(ALIGNMENT_SIZE as usize - 1)
                         };
 
                         let data = &work_buffer[offset..offset + download_size];
