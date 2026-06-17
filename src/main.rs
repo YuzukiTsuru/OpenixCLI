@@ -86,6 +86,18 @@ async fn main() -> anyhow::Result<()> {
 
             commands::flash::execute(args).await?;
         }
+        Some(Commands::Inspect { firmware }) => {
+            setup_logging(cli.verbose);
+            commands::inspect::execute(firmware.into()).await?;
+        }
+        Some(Commands::Unpack { firmware, output }) => {
+            setup_logging(cli.verbose);
+            commands::unpack::execute(commands::UnpackArgs {
+                firmware_path: firmware.into(),
+                output: output.map(std::path::PathBuf::from),
+            })
+            .await?;
+        }
     }
 
     Ok(())

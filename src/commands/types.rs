@@ -40,6 +40,16 @@ impl FlashArgs {
     }
 }
 
+/// Arguments for the unpack command
+///
+/// # Fields
+/// * `firmware_path` - Path to the firmware file
+/// * `output` - Optional output directory (defaults to ./<firmware>_unpacked)
+pub struct UnpackArgs {
+    pub firmware_path: PathBuf,
+    pub output: Option<PathBuf>,
+}
+
 pub fn parse_partition_list(partitions: Option<String>) -> Option<Vec<String>> {
     partitions.map(|value| {
         value
