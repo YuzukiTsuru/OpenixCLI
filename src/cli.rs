@@ -89,6 +89,24 @@ pub enum Commands {
         post_action: PostAction,
     },
 
+    /// Inspect firmware contents (image header, embedded files, MBR partitions)
+    Inspect {
+        /// Path to firmware file
+        #[arg(help = "Path to firmware file")]
+        firmware: String,
+    },
+
+    /// Unpack firmware data to disk (embedded files + partition images)
+    Unpack {
+        /// Path to firmware file
+        #[arg(help = "Path to firmware file")]
+        firmware: String,
+
+        /// Output directory (default: ./<firmware>_unpacked)
+        #[arg(short, long, help = "Output directory")]
+        output: Option<String>,
+    },
+
     /// Launch interactive TUI mode
     Tui,
 }
