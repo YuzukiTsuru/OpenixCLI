@@ -158,7 +158,7 @@ impl OpenixPacker {
             .collect();
 
         ImageInfo {
-            image_size: header.image_size,
+            image_size: header.image_size as u64,
             num_files: header.num_files(),
             header,
             files,
@@ -268,8 +268,8 @@ impl OpenixPacker {
         let header_version = self.get_header_version();
         let file_header = self.get_file_header_by_maintype_subtype(maintype, subtype)?;
         Some((
-            file_header.offset(header_version) as u64,
-            file_header.original_length(header_version) as u64,
+            file_header.offset(header_version),
+            file_header.original_length(header_version),
         ))
     }
 
@@ -282,16 +282,16 @@ impl OpenixPacker {
         let header_version = self.get_header_version();
         let file_header = self.get_file_header_by_filename(filename)?;
         Some((
-            file_header.offset(header_version) as u64,
-            file_header.original_length(header_version) as u64,
+            file_header.offset(header_version),
+            file_header.original_length(header_version),
         ))
     }
 
     /// Read data at specified offset
-    fn read_data_at_offset(&mut self, offset: u32, length: u32) -> Result<Vec<u8>, PackerError> {
+    fn read_data_at_offset(&mut self, offset: u64, length: u64) -> Result<Vec<u8>, PackerError> {
         let file = self.file.as_mut().ok_or(PackerError::ImageNotLoaded)?;
 
-        file.seek(SeekFrom::Start(offset as u64))?;
+        file.seek(SeekFrom::Start(offset))?;
 
         let mut buffer = vec![0u8; length as usize];
         file.read_exact(&mut buffer)?;
@@ -316,7 +316,7 @@ impl OpenixPacker {
             .get_file_header_by_maintype_subtype(maintype, subtype)
             .ok_or_else(|| PackerError::FileNotFound(format!("{}/{}", maintype, subtype)))?;
 
-        let original_length = file_header.original_length(header_version) as u64;
+        let original_length = file_header.original_length(header_version);
         if start + length > original_length {
             return Err(PackerError::FileNotFound(format!(
                 "Range out of bounds: {} + {} > {}",
@@ -324,10 +324,7 @@ impl OpenixPacker {
             )));
         }
 
-        self.read_data_at_offset(
-            (file_header.offset(header_version) as u64 + start) as u32,
-            length as u32,
-        )
+        self.read_data_at_offset(file_header.offset(header_version) + start, length)
     }
 
     /// Build subtype from partition name
