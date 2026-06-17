@@ -114,10 +114,7 @@ pub async fn execute(firmware: PathBuf) -> anyhow::Result<()> {
             }
             Err(e) => println!("  {}", format!("Failed to parse MBR: {}", e).yellow()),
         },
-        Err(e) => println!(
-            "  {}",
-            format!("No MBR in firmware: {}", e).yellow()
-        ),
+        Err(e) => println!("  {}", format!("No MBR in firmware: {}", e).yellow()),
     }
 
     Ok(())

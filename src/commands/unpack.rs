@@ -137,8 +137,7 @@ pub async fn execute(args: UnpackArgs) -> anyhow::Result<()> {
                         continue;
                     };
 
-                    let out_path =
-                        parts_dir.join(format!("{}.img", sanitize_filename(&p.name)));
+                    let out_path = parts_dir.join(format!("{}.img", sanitize_filename(&p.name)));
                     match extract_range(&mut packer, maintype, &subtype, length, &out_path) {
                         Ok(n) => {
                             let tag = if probe_sparse(&mut packer, maintype, &subtype) {
@@ -162,10 +161,7 @@ pub async fn execute(args: UnpackArgs) -> anyhow::Result<()> {
             }
             Err(e) => eprintln!("  {}", format!("Failed to parse MBR: {}", e).yellow()),
         },
-        Err(e) => eprintln!(
-            "  {}",
-            format!("No MBR in firmware: {}", e).yellow()
-        ),
+        Err(e) => eprintln!("  {}", format!("No MBR in firmware: {}", e).yellow()),
     }
 
     println!();
