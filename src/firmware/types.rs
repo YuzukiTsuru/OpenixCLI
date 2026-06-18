@@ -21,37 +21,45 @@ pub const IMAGEWTY_FHDR_FILENAME_LEN: usize = 256;
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct ImageHeaderV1 {
+    pub image_size: u32,
+    pub align: u32,
     pub pid: u32,
     pub vid: u32,
     pub hardware_id: u32,
     pub firmware_id: u32,
-    pub val1: u32,
-    pub val1024: u32,
-    pub num_files: u32,
-    pub val1024_2: u32,
-    pub val0: u32,
-    pub val0_2: u32,
-    pub val0_3: u32,
-    pub val0_4: u32,
+    pub file_attr: u32,
+    pub file_size: u32,
+    pub file_count: u32,
+    pub file_offset: u32,
+    pub attr: u32,
+    pub ext_size: u32,
+    pub ext_offset: u32,
+    pub reverse: [u8; 4],
 }
 
 /// Image header version 3 structure
+///
+/// Version 3 stores the 64-bit `image_size` and `ext_offset` fields as split
+/// `lo`/`hi` `u32` pairs, which allows representing images larger than 4 GiB.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct ImageHeaderV3 {
-    pub unknown: u32,
+    pub image_size_lo: u32,
+    pub image_size_hi: u32,
+    pub align: u32,
     pub pid: u32,
     pub vid: u32,
     pub hardware_id: u32,
     pub firmware_id: u32,
-    pub val1: u32,
-    pub val1024: u32,
-    pub num_files: u32,
-    pub val1024_2: u32,
-    pub val0: u32,
-    pub val0_2: u32,
-    pub val0_3: u32,
-    pub val0_4: u32,
+    pub file_attr: u32,
+    pub file_size: u32,
+    pub file_count: u32,
+    pub file_offset: u32,
+    pub attr: u32,
+    pub ext_size: u32,
+    pub ext_offset_lo: u32,
+    pub ext_offset_hi: u32,
+    pub reverse: [u8; 12],
 }
 
 /// Union for different header versions
@@ -83,10 +91,8 @@ pub struct ImageHeader {
     pub magic: [u8; IMAGEWTY_MAGIC_LEN],
     pub header_version: u32,
     pub header_size: u32,
-    pub ram_base: u32,
+    pub attr: u32,
     pub version: u32,
-    pub image_size: u32,
-    pub image_header_size: u32,
     pub data: ImageHeaderVersionData,
 }
 
@@ -102,18 +108,14 @@ impl std::fmt::Debug for ImageHeader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let header_version = self.header_version;
         let header_size = self.header_size;
-        let ram_base = self.ram_base;
+        let attr = self.attr;
         let version = self.version;
-        let image_size = self.image_size;
-        let image_header_size = self.image_header_size;
         f.debug_struct("ImageHeader")
             .field("magic", &self.magic_str())
             .field("header_version", &header_version)
             .field("header_size", &header_size)
-            .field("ram_base", &ram_base)
+            .field("attr", &attr)
             .field("version", &version)
-            .field("image_size", &image_size)
-            .field("image_header_size", &image_header_size)
             .finish()
     }
 }
@@ -148,9 +150,24 @@ impl ImageHeader {
     pub fn num_files(&self) -> u32 {
         unsafe {
             if self.header_version == 0x0300 {
-                self.data.v3.num_files
+                self.data.v3.file_count
             } else {
-                self.data.v1.num_files
+                self.data.v1.file_count
+            }
+        }
+    }
+
+    /// Get total image size
+    ///
+    /// In v3 the size is stored as a split 64-bit `lo`/`hi` pair, which allows
+    /// representing images larger than 4 GiB.
+    pub fn image_size(&self) -> u64 {
+        unsafe {
+            if self.header_version == 0x0300 {
+                let v3 = self.data.v3;
+                (v3.image_size_lo as u64) | ((v3.image_size_hi as u64) << 32)
+            } else {
+                self.data.v1.image_size as u64
             }
         }
     }
