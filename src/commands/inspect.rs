@@ -44,7 +44,7 @@ pub async fn execute(firmware: PathBuf) -> anyhow::Result<()> {
     // borrowing its fields (as println! does) would be unaligned UB (E0793).
     let magic = info.header.magic;
     let header_version = info.header.header_version;
-    let ram_base = info.header.ram_base;
+    let attr = info.header.attr;
     let version = info.header.version;
 
     // ---- image header ----
@@ -58,7 +58,7 @@ pub async fn execute(firmware: PathBuf) -> anyhow::Result<()> {
         info.image_size
     );
     println!("  Embedded files  : {}", info.num_files);
-    println!("  RAM base        : 0x{:08x}", ram_base);
+    println!("  Attr            : 0x{:08x}", attr);
     println!("  Version         : 0x{:08x}", version);
     println!("  Encrypted       : {}", info.is_encrypted);
 
