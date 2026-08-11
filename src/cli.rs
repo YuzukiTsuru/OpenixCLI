@@ -2,7 +2,7 @@
 //!
 //! Defines the CLI structure using clap for argument parsing
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::flash::{FlashMode, PostAction};
 
@@ -23,6 +23,27 @@ pub struct Cli {
     /// Enable verbose output
     #[arg(short, long, global = true, help = "Enable verbose output")]
     pub verbose: bool,
+
+    /// USB backend selection (Windows: winusb default; use libusb if open fails)
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t = UsbBackendArg::Auto,
+        help = "USB backend: auto, libusb, winusb"
+    )]
+    pub backend: UsbBackendArg,
+}
+
+/// USB backend choice exposed on the command line
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum UsbBackendArg {
+    /// Platform default (Windows: winusb)
+    Auto,
+    /// Force libusb backend
+    Libusb,
+    /// Force winusb backend (Windows only)
+    Winusb,
 }
 
 /// Available CLI commands
