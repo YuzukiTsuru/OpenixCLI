@@ -24,7 +24,7 @@ mod tui;
 mod utils;
 
 /// CLI structure parsed from command line arguments
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, UsbBackendArg};
 use commands::{parse_partition_list, FlashArgs};
 use utils::TermLogger;
 
@@ -52,6 +52,20 @@ fn setup_logging(verbose: bool) {
 /// Ok(()) on success, anyhow::Error on failure
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Apply USB backend selection before any device access.
+    // On Windows the default (Auto) resolves to WinUSB, which fails to open
+    // some devices installed via Zadig/libwdi; --backend libusb works there.
+    {
+        let backend = match cli.backend {
+            UsbBackendArg::Auto => libefex::UsbBackend::Auto,
+            UsbBackendArg::Libusb => libefex::UsbBackend::Libusb,
+            UsbBackendArg::Winusb => libefex::UsbBackend::Winusb,
+        };
+        if let Err(e) = libefex::Context::set_usb_backend_static(backend) {
+            eprintln!("Warning: failed to set USB backend: {:?}", e);
+        }
+    }
 
     match cli.command {
         None | Some(Commands::Tui) => {
