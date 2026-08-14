@@ -1,6 +1,6 @@
 //! Boot image download handler
 //!
-//! Handles downloading Boot0 and Boot1 images to device storage
+//! Handles downloading Preboot, Boot0, and Boot1 images to device storage
 
 use crate::config::boot_header::{BOOT_FILE_MODE_NORMAL, BOOT_FILE_MODE_PKG, BOOT_FILE_MODE_TOC};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
@@ -11,7 +11,7 @@ use libefex::FesDataType;
 
 /// Boot image download handler
 ///
-/// Downloads Boot0 and Boot1 images to device storage based on
+/// Downloads Preboot, Boot0, and Boot1 images to device storage based on
 /// the boot mode and storage type
 pub struct BootDownload<'a> {
     logger: &'a Logger,
@@ -25,7 +25,7 @@ impl<'a> BootDownload<'a> {
 
     /// Execute boot image download
     ///
-    /// Downloads both Boot1 and Boot0 images to device
+    /// Downloads Preboot, Boot1, and Boot0 images to device
     pub async fn execute(
         &self,
         ctx: &libefex::Context,
@@ -33,15 +33,50 @@ impl<'a> BootDownload<'a> {
         secure: u32,
         storage_type: u32,
     ) -> FlashResult<()> {
-        self.logger.info("Downloading Boot0/Boot1...");
+        self.logger.info("Downloading Preboot/Boot0/Boot1...");
 
+        self.download_preboot(ctx, packer, secure).await?;
         self.download_boot1(ctx, packer, secure, storage_type)
             .await?;
         self.download_boot0(ctx, packer, secure, storage_type)
             .await?;
 
-        self.logger.stage_complete("Boot0/Boot1 downloaded");
+        self.logger.stage_complete("Preboot/Boot0/Boot1 downloaded");
         Ok(())
+    }
+
+    /// Download the optional preboot image before Boot1.
+    async fn download_preboot(
+        &self,
+        ctx: &libefex::Context,
+        packer: &mut OpenixPacker,
+        secure: u32,
+    ) -> FlashResult<()> {
+        let Some(subtype) = self.get_preboot_subtype(secure) else {
+            return Ok(());
+        };
+
+        self.logger
+            .debug(&format!("Looking for Preboot: {}", subtype));
+
+        if packer.find_file_header_by_subtype(subtype).is_none() {
+            self.logger
+                .debug(&format!("Preboot not found: {}, skipping", subtype));
+            return Ok(());
+        }
+
+        let preboot_data = packer.find_file_data_by_subtype(subtype)?;
+        self.logger.info(&format!(
+            "Downloading Preboot: {} ({} bytes)",
+            subtype,
+            preboot_data.len()
+        ));
+
+        ctx.fes_down(&preboot_data, 0, FesDataType::Preboot)
+            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+
+        self.verify_boot(ctx, fes_data_type::PREBOOT, "Preboot")
+            .await
     }
 
     /// Download Boot1 image
@@ -149,6 +184,15 @@ impl<'a> BootDownload<'a> {
         Ok(())
     }
 
+    /// Get Preboot subtype based on boot mode.
+    fn get_preboot_subtype(&self, secure: u32) -> Option<&'static str> {
+        match secure {
+            BOOT_FILE_MODE_NORMAL | BOOT_FILE_MODE_PKG => Some("1234567890PREB_0"),
+            BOOT_FILE_MODE_TOC => Some("TOC0_PREBOOT0000"),
+            _ => None,
+        }
+    }
+
     /// Get Boot1 subtype based on boot mode and storage type
     fn get_boot1_subtype(
         &self,
@@ -191,5 +235,35 @@ impl<'a> BootDownload<'a> {
                 _ => Some("TOC0_00000000000"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selects_preboot_item_for_each_supported_boot_mode() {
+        let logger = Logger::new();
+        let downloader = BootDownload::new(&logger);
+
+        assert_eq!(
+            downloader.get_preboot_subtype(BOOT_FILE_MODE_NORMAL),
+            Some("1234567890PREB_0")
+        );
+        assert_eq!(
+            downloader.get_preboot_subtype(BOOT_FILE_MODE_PKG),
+            Some("1234567890PREB_0")
+        );
+        assert_eq!(
+            downloader.get_preboot_subtype(BOOT_FILE_MODE_TOC),
+            Some("TOC0_PREBOOT0000")
+        );
+        assert_eq!(downloader.get_preboot_subtype(u32::MAX), None);
+    }
+
+    #[test]
+    fn preboot_verify_type_matches_efex_protocol() {
+        assert_eq!(fes_data_type::PREBOOT, 0x7f08);
     }
 }

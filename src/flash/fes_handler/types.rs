@@ -12,6 +12,7 @@ pub mod fes_data_type {
     pub const BOOT1: u32 = 0x7f02;
     pub const BOOT0: u32 = 0x7f03;
     pub const ERASE: u32 = 0x7f04;
+    pub const PREBOOT: u32 = 0x7f08;
     pub const FULL_IMG_SIZE: u32 = 0x7f10;
     pub const EXT4_UBIFS: u32 = 0x7ff0;
     pub const FLASH: u32 = 0x8000;
