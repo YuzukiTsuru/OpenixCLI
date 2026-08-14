@@ -131,3 +131,103 @@ pub enum Commands {
     /// Launch interactive TUI mode
     Tui,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_tui_behavior_with_auto_backend() {
+        let cli = Cli::try_parse_from(["openixcli"]).unwrap();
+        assert!(cli.command.is_none());
+        assert!(!cli.verbose);
+        assert_eq!(cli.backend, UsbBackendArg::Auto);
+
+        let cli = Cli::try_parse_from(["openixcli", "--backend", "libusb", "tui"]).unwrap();
+        assert_eq!(cli.backend, UsbBackendArg::Libusb);
+        assert!(matches!(cli.command, Some(Commands::Tui)));
+    }
+
+    #[test]
+    fn parses_scan_inspect_and_unpack_commands() {
+        let scan = Cli::try_parse_from(["openixcli", "-v", "scan", "--detailed"]).unwrap();
+        assert!(scan.verbose);
+        assert!(matches!(
+            scan.command,
+            Some(Commands::Scan { detailed: true })
+        ));
+
+        let inspect = Cli::try_parse_from(["openixcli", "inspect", "firmware.fex"]).unwrap();
+        assert!(matches!(
+            inspect.command,
+            Some(Commands::Inspect { firmware }) if firmware == "firmware.fex"
+        ));
+
+        let unpack =
+            Cli::try_parse_from(["openixcli", "unpack", "firmware.fex", "--output", "out"])
+                .unwrap();
+        assert!(matches!(
+            unpack.command,
+            Some(Commands::Unpack { firmware, output: Some(output) })
+                if firmware == "firmware.fex" && output == "out"
+        ));
+    }
+
+    #[test]
+    fn parses_all_flash_options_and_defaults() {
+        let defaults = Cli::try_parse_from(["openixcli", "flash", "firmware.fex"]).unwrap();
+        assert!(matches!(
+            defaults.command,
+            Some(Commands::Flash {
+                verify: true,
+                mode: FlashMode::FullErase,
+                post_action: PostAction::Reboot,
+                ..
+            })
+        ));
+
+        let cli = Cli::try_parse_from([
+            "openixcli",
+            "--backend",
+            "winusb",
+            "flash",
+            "firmware.fex",
+            "--bus",
+            "2",
+            "--port",
+            "7",
+            "--verify=false",
+            "--mode",
+            "partition",
+            "--partitions",
+            "boot,system",
+            "--post-action",
+            "shutdown",
+        ])
+        .unwrap();
+        assert_eq!(cli.backend, UsbBackendArg::Winusb);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Flash {
+                firmware,
+                bus: Some(2),
+                port: Some(7),
+                verify: false,
+                mode: FlashMode::Partition,
+                partitions: Some(partitions),
+                post_action: PostAction::Shutdown,
+            }) if firmware == "firmware.fex" && partitions == "boot,system"
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_values_and_missing_required_arguments() {
+        assert!(Cli::try_parse_from(["openixcli", "--backend", "invalid"]).is_err());
+        assert!(Cli::try_parse_from(["openixcli", "flash"]).is_err());
+        assert!(
+            Cli::try_parse_from(["openixcli", "flash", "firmware.fex", "--mode", "invalid"])
+                .is_err()
+        );
+        assert!(Cli::try_parse_from(["openixcli", "unknown"]).is_err());
+    }
+}

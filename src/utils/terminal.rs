@@ -59,11 +59,11 @@ pub fn set_tui_log_sender(tx: Option<mpsc::UnboundedSender<TuiLogMessage>>) {
 fn send_to_tui(level: TuiLogLevel, message: &str) -> bool {
     let sender = TUI_LOG_SENDER.lock().unwrap();
     if let Some(ref tx) = *sender {
-        let _ = tx.send(TuiLogMessage {
+        tx.send(TuiLogMessage {
             level,
             message: message.to_string(),
-        });
-        true
+        })
+        .is_ok()
     } else {
         false
     }
@@ -209,4 +209,175 @@ pub fn log_debug(message: &str) {
 /// Log a stage completion message
 pub fn log_stage_complete(message: &str) {
     log_success(message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use log::{Level, Log, Metadata, Record};
+
+    fn drain(rx: &mut mpsc::UnboundedReceiver<TuiLogMessage>) -> Vec<TuiLogMessage> {
+        let mut messages = Vec::new();
+        while let Ok(message) = rx.try_recv() {
+            messages.push(message);
+        }
+        messages
+    }
+
+    #[test]
+    fn direct_log_helpers_route_all_levels_and_honor_verbose() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        set_tui_log_sender(Some(tx));
+        set_verbose(false);
+
+        log_info("info");
+        log_success("success");
+        log_warn("warn");
+        log_error("error");
+        log_debug("hidden");
+        log_stage_complete("stage");
+        set_verbose(true);
+        log_debug("debug");
+
+        let messages = drain(&mut rx);
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[0].level, TuiLogLevel::Info);
+        assert_eq!(messages[1].level, TuiLogLevel::Success);
+        assert_eq!(messages[2].level, TuiLogLevel::Warn);
+        assert_eq!(messages[3].level, TuiLogLevel::Error);
+        assert_eq!(messages[4].message, "stage");
+        assert_eq!(messages[5].level, TuiLogLevel::Debug);
+        assert_eq!(messages[5].message, "debug");
+        assert!(is_verbose());
+
+        set_tui_log_sender(None);
+        set_verbose(false);
+    }
+
+    #[test]
+    fn closed_tui_channel_is_not_reported_as_a_successful_send() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        set_tui_log_sender(Some(tx));
+        assert!(!send_to_tui(TuiLogLevel::Info, "orphaned"));
+        set_tui_log_sender(None);
+    }
+
+    #[test]
+    fn term_logger_filters_targets_debug_and_maps_record_levels() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        let logger = TermLogger::new(false);
+        assert!(logger.enabled(
+            &Metadata::builder()
+                .level(Level::Debug)
+                .target("openixcli::x")
+                .build()
+        ));
+        assert!(logger.enabled(
+            &Metadata::builder()
+                .level(Level::Trace)
+                .target("libefex::x")
+                .build()
+        ));
+        assert!(logger.enabled(
+            &Metadata::builder()
+                .level(Level::Info)
+                .target("dependency")
+                .build()
+        ));
+        assert!(!logger.enabled(
+            &Metadata::builder()
+                .level(Level::Debug)
+                .target("dependency")
+                .build()
+        ));
+
+        for level in [
+            Level::Error,
+            Level::Warn,
+            Level::Info,
+            Level::Debug,
+            Level::Trace,
+        ] {
+            assert!(!logger.format_level(level).is_empty());
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        set_tui_log_sender(Some(tx));
+        for level in [
+            Level::Error,
+            Level::Warn,
+            Level::Info,
+            Level::Debug,
+            Level::Trace,
+        ] {
+            let args = format_args!("{level}");
+            let record = Record::builder()
+                .args(args)
+                .level(level)
+                .target("openixcli::test")
+                .build();
+            logger.log(&record);
+        }
+        logger.flush();
+
+        let messages = drain(&mut rx);
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].level, TuiLogLevel::Error);
+        assert_eq!(messages[1].level, TuiLogLevel::Warn);
+        assert_eq!(messages[2].level, TuiLogLevel::Info);
+        assert_eq!(messages[3].level, TuiLogLevel::Debug);
+
+        set_tui_log_sender(None);
+    }
+
+    #[test]
+    fn logger_initialization_sets_level_and_rejects_a_second_global_logger() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        assert!(TermLogger::init(false).is_ok());
+        assert_eq!(log::max_level(), LevelFilter::Info);
+        assert!(TermLogger::init(true).is_err());
+        set_verbose(false);
+    }
+
+    #[test]
+    fn terminal_fallback_writes_all_levels_without_a_tui_receiver() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        set_tui_log_sender(None);
+        assert!(!send_to_tui(TuiLogLevel::Info, "no receiver"));
+        set_verbose(true);
+        log_info("info fallback");
+        log_success("success fallback");
+        log_warn("warning fallback");
+        log_error("error fallback");
+        log_debug("debug fallback");
+        log_stage_complete("stage fallback");
+
+        let logger = TermLogger::new(true);
+        for level in [
+            Level::Error,
+            Level::Warn,
+            Level::Info,
+            Level::Debug,
+            Level::Trace,
+        ] {
+            logger.log(
+                &Record::builder()
+                    .args(format_args!("fallback"))
+                    .level(level)
+                    .target("openixcli::fallback")
+                    .build(),
+            );
+        }
+        logger.log(
+            &Record::builder()
+                .args(format_args!("filtered"))
+                .level(Level::Debug)
+                .target("dependency")
+                .build(),
+        );
+        set_verbose(false);
+    }
 }

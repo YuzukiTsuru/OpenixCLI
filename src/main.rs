@@ -14,19 +14,11 @@
 
 use clap::Parser;
 
-mod cli;
-mod commands;
-mod config;
-mod firmware;
-mod flash;
-mod process;
-mod tui;
-mod utils;
-
 /// CLI structure parsed from command line arguments
-use cli::{Cli, Commands, UsbBackendArg};
-use commands::{parse_partition_list, FlashArgs};
-use utils::TermLogger;
+use openixcli::cli::{Cli, Commands, UsbBackendArg};
+use openixcli::commands::{self, parse_partition_list, FlashArgs};
+use openixcli::tui;
+use openixcli::utils::TermLogger;
 
 /// Initialize the logging system
 ///
@@ -37,6 +29,20 @@ use utils::TermLogger;
 fn setup_logging(verbose: bool) {
     if let Err(e) = TermLogger::init(verbose) {
         eprintln!("Failed to initialize logger: {}", e);
+    }
+}
+
+fn usb_backend(backend: UsbBackendArg) -> libefex::UsbBackend {
+    match backend {
+        UsbBackendArg::Auto => libefex::UsbBackend::Auto,
+        UsbBackendArg::Libusb => libefex::UsbBackend::Libusb,
+        UsbBackendArg::Winusb => libefex::UsbBackend::Winusb,
+    }
+}
+
+fn configure_usb_backend(backend: UsbBackendArg) {
+    if let Err(error) = libefex::Context::set_usb_backend_static(usb_backend(backend)) {
+        eprintln!("Warning: failed to set USB backend: {:?}", error);
     }
 }
 
@@ -56,16 +62,7 @@ async fn main() -> anyhow::Result<()> {
     // Apply USB backend selection before any device access.
     // On Windows the default (Auto) resolves to WinUSB, which fails to open
     // some devices installed via Zadig/libwdi; --backend libusb works there.
-    {
-        let backend = match cli.backend {
-            UsbBackendArg::Auto => libefex::UsbBackend::Auto,
-            UsbBackendArg::Libusb => libefex::UsbBackend::Libusb,
-            UsbBackendArg::Winusb => libefex::UsbBackend::Winusb,
-        };
-        if let Err(e) = libefex::Context::set_usb_backend_static(backend) {
-            eprintln!("Warning: failed to set USB backend: {:?}", e);
-        }
-    }
+    configure_usb_backend(cli.backend);
 
     match cli.command {
         None | Some(Commands::Tui) => {
@@ -115,4 +112,32 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usb_backend_mapping_covers_every_cli_value() {
+        assert!(matches!(
+            usb_backend(UsbBackendArg::Auto),
+            libefex::UsbBackend::Auto
+        ));
+        assert!(matches!(
+            usb_backend(UsbBackendArg::Libusb),
+            libefex::UsbBackend::Libusb
+        ));
+        assert!(matches!(
+            usb_backend(UsbBackendArg::Winusb),
+            libefex::UsbBackend::Winusb
+        ));
+        configure_usb_backend(UsbBackendArg::Auto);
+    }
+
+    #[test]
+    fn logging_setup_tolerates_repeated_initialization() {
+        setup_logging(false);
+        setup_logging(true);
+    }
 }

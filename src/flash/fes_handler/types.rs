@@ -86,21 +86,9 @@ impl IncrementalChecksum {
     /// Processes any remaining bytes and returns the final checksum
     pub fn finalize(&mut self) -> u32 {
         if !self.pending_bytes.is_empty() {
-            let last_value: u32 = match self.pending_bytes.len() {
-                1 => self.pending_bytes[0] as u32 & 0x000000ff,
-                2 => {
-                    (self.pending_bytes[0] as u32 | (self.pending_bytes[1] as u32) << 8)
-                        & 0x0000ffff
-                }
-                3 => {
-                    (self.pending_bytes[0] as u32
-                        | (self.pending_bytes[1] as u32) << 8
-                        | (self.pending_bytes[2] as u32) << 16)
-                        & 0x00ffffff
-                }
-                _ => 0,
-            };
-            self.sum = self.sum.wrapping_add(last_value);
+            let mut tail = [0u8; 4];
+            tail[..self.pending_bytes.len()].copy_from_slice(&self.pending_bytes);
+            self.sum = self.sum.wrapping_add(u32::from_le_bytes(tail));
             self.pending_bytes.clear();
         }
         self.sum
@@ -110,5 +98,48 @@ impl IncrementalChecksum {
 impl Default for IncrementalChecksum {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incremental_checksum_matches_single_pass_for_split_and_tail_data() {
+        let data = [1, 2, 3, 4, 5, 6, 7];
+        let expected = crate::firmware::sparse::add_sum(&data, 0);
+        for split in 0..=data.len() {
+            let mut checksum = IncrementalChecksum::new();
+            checksum.update(&data[..split]);
+            checksum.update(&data[split..]);
+            assert_eq!(checksum.finalize(), expected, "split={split}");
+            assert_eq!(checksum.finalize(), expected);
+        }
+    }
+
+    #[test]
+    fn default_checksum_handles_empty_and_wrapping_words() {
+        let mut checksum = IncrementalChecksum::default();
+        assert_eq!(checksum.finalize(), 0);
+        checksum.update(&u32::MAX.to_le_bytes());
+        checksum.update(&1u32.to_le_bytes());
+        assert_eq!(checksum.finalize(), 0);
+    }
+
+    #[test]
+    fn partition_download_info_clone_owns_its_strings() {
+        let info = PartitionDownloadInfo {
+            partition_name: "system".into(),
+            partition_address: 1,
+            download_filename: "system.img".into(),
+            download_subtype: "SYSTEM_IMG000000".into(),
+            data_offset: 2,
+            data_length: 3,
+        };
+        let mut cloned = info.clone();
+        cloned.partition_name = "vendor".into();
+        assert_eq!(info.partition_name, "system");
+        assert_eq!(cloned.partition_name, "vendor");
     }
 }

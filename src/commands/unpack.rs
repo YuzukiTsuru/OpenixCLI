@@ -235,7 +235,8 @@ fn default_outdir(firmware: &Path) -> PathBuf {
 
 /// Make a firmware-internal filename safe for use as a filesystem path.
 fn sanitize_filename(s: &str) -> String {
-    let cleaned: String = s
+    let trimmed = s.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    let cleaned: String = trimmed
         .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' => '_',
@@ -273,5 +274,181 @@ fn truncate(s: &str, n: usize) -> String {
         let mut t: String = s.chars().take(n.saturating_sub(1)).collect();
         t.push('…');
         t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::firmware::sparse::{
+        SparseHeader, CHUNK_HEADER_SIZE, SPARSE_HEADER_MAGIC, SPARSE_HEADER_MAJOR_VER,
+    };
+    use crate::test_support::{mbr_bytes, temp_dir, test_firmware, write_struct, FirmwareEntry};
+
+    #[test]
+    fn path_and_format_helpers_cover_unsafe_names_boundaries_and_unicode() {
+        assert_eq!(
+            default_outdir(Path::new("firmware.fex")),
+            PathBuf::from("firmware_unpacked")
+        );
+        assert_eq!(
+            default_outdir(Path::new(".")),
+            PathBuf::from("firmware_unpacked")
+        );
+        assert_eq!(sanitize_filename(" ../a:b*c?.img "), "_a_b_c_.img");
+        assert_eq!(sanitize_filename("..."), "");
+        assert_eq!(sanitize_filename("a\n\tb"), "a__b");
+        assert_eq!(human_size(10), "10 B");
+        assert_eq!(human_size(1024), "1.0 KB");
+        assert_eq!(human_size(1024 * 1024), "1.00 MB");
+        assert_eq!(human_size(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(truncate("abc", 0), "");
+        assert_eq!(truncate("abc", 3), "abc");
+        assert_eq!(truncate("你好世界", 3), "你好…");
+    }
+
+    #[test]
+    fn resolve_extract_and_sparse_probe_cover_primary_fallback_and_errors() {
+        let sparse_header = SparseHeader {
+            magic: SPARSE_HEADER_MAGIC,
+            major_version: SPARSE_HEADER_MAJOR_VER,
+            minor_version: 0,
+            file_hdr_sz: SPARSE_HEADER_SIZE as u16,
+            chunk_hdr_sz: CHUNK_HEADER_SIZE as u16,
+            blk_sz: 4096,
+            total_blks: 0,
+            total_chunks: 0,
+            image_checksum: 0,
+        };
+        let mut sparse = vec![0; SPARSE_HEADER_SIZE];
+        write_struct(&mut sparse, &sparse_header);
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "primary.img",
+                maintype: MAINTYPE_RFSFAT16,
+                subtype: "PRIMARY000000000",
+                data: b"primary",
+            },
+            FirmwareEntry {
+                filename: "fallback.img",
+                maintype: MAINTYPE_FALLBACK,
+                subtype: "FALLBACK00000000",
+                data: &sparse,
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        assert_eq!(
+            resolve_info(&packer, "PRIMARY000000000"),
+            Some((MAINTYPE_RFSFAT16, 7))
+        );
+        assert_eq!(
+            resolve_info(&packer, "FALLBACK00000000"),
+            Some((MAINTYPE_FALLBACK, sparse.len() as u64))
+        );
+        assert_eq!(resolve_info(&packer, "MISSING000000000"), None);
+        assert!(!probe_sparse(
+            &mut packer,
+            MAINTYPE_RFSFAT16,
+            "PRIMARY000000000"
+        ));
+        assert!(probe_sparse(
+            &mut packer,
+            MAINTYPE_FALLBACK,
+            "FALLBACK00000000"
+        ));
+        assert!(!probe_sparse(
+            &mut packer,
+            MAINTYPE_FALLBACK,
+            "MISSING000000000"
+        ));
+
+        let dir = temp_dir("extract");
+        let output = dir.path().join("primary.bin");
+        assert_eq!(
+            extract_range(
+                &mut packer,
+                MAINTYPE_RFSFAT16,
+                "PRIMARY000000000",
+                7,
+                &output
+            )
+            .unwrap(),
+            7
+        );
+        assert_eq!(fs::read(output).unwrap(), b"primary");
+        let empty = dir.path().join("empty.bin");
+        assert_eq!(
+            extract_range(
+                &mut packer,
+                MAINTYPE_RFSFAT16,
+                "PRIMARY000000000",
+                0,
+                &empty
+            )
+            .unwrap(),
+            0
+        );
+        assert!(fs::read(empty).unwrap().is_empty());
+        assert!(extract_range(
+            &mut packer,
+            MAINTYPE_RFSFAT16,
+            "PRIMARY000000000",
+            8,
+            &dir.path().join("too-long.bin")
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_extracts_embedded_files_and_configured_partitions() {
+        let mbr = mbr_bytes(&[("system", 0x20, 7, false)]);
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "sunxi_mbr.fex",
+                maintype: "12345678",
+                subtype: "1234567890___MBR",
+                data: &mbr,
+            },
+            FirmwareEntry {
+                filename: "sys_partition.fex",
+                maintype: "COMMON",
+                subtype: "SYS_CONFIG000000",
+                data: b"[partition_start]\n[partition]\nname=system\ndownloadfile=system.img\n",
+            },
+            FirmwareEntry {
+                filename: "system.img",
+                maintype: MAINTYPE_RFSFAT16,
+                subtype: "SYSTEM_IMG000000",
+                data: b"payload",
+            },
+        ]);
+        let dir = temp_dir("unpack");
+        let output = dir.path().join("result");
+        execute(UnpackArgs {
+            firmware_path: firmware.path().to_path_buf(),
+            output: Some(output.clone()),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::read(output.join("files/system.img")).unwrap(),
+            b"payload"
+        );
+        assert_eq!(
+            fs::read(output.join("partitions/system.img")).unwrap(),
+            b"payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_missing_firmware() {
+        let dir = temp_dir("unpack-missing");
+        assert!(execute(UnpackArgs {
+            firmware_path: dir.path().join("missing.fex"),
+            output: Some(dir.path().join("out")),
+        })
+        .await
+        .is_err());
     }
 }

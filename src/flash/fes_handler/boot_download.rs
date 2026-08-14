@@ -6,6 +6,7 @@ use crate::config::boot_header::{BOOT_FILE_MODE_NORMAL, BOOT_FILE_MODE_PKG, BOOT
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::{OpenixPacker, PackerError, StorageType};
 use crate::flash::fes_handler::types::fes_data_type;
+use crate::flash::protocol::FesOps;
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
 
@@ -26,9 +27,9 @@ impl<'a> BootDownload<'a> {
     /// Execute boot image download
     ///
     /// Downloads Preboot, Boot1, and Boot0 images to device
-    pub async fn execute(
+    pub async fn execute<C: FesOps>(
         &self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         secure: u32,
         storage_type: u32,
@@ -46,9 +47,9 @@ impl<'a> BootDownload<'a> {
     }
 
     /// Download the optional preboot image before Boot1.
-    async fn download_preboot(
+    async fn download_preboot<C: FesOps>(
         &self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         secure: u32,
     ) -> FlashResult<()> {
@@ -82,9 +83,9 @@ impl<'a> BootDownload<'a> {
     /// Download Boot1 image
     ///
     /// Boot1 is the secondary boot loader
-    async fn download_boot1(
+    async fn download_boot1<C: FesOps>(
         &self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         secure: u32,
         storage_type: u32,
@@ -121,9 +122,9 @@ impl<'a> BootDownload<'a> {
     /// Download Boot0 image
     ///
     /// Boot0 is the primary boot loader stored in storage
-    async fn download_boot0(
+    async fn download_boot0<C: FesOps>(
         &self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         secure: u32,
         storage_type: u32,
@@ -133,11 +134,12 @@ impl<'a> BootDownload<'a> {
                 .debug(&format!("Looking for Boot0: {}", subtype));
 
             let boot0_data = packer.find_file_data_by_subtype(subtype).or_else(|_| {
-                if let Some(s) = self.get_boot0_subtype(secure, 0) {
-                    packer.find_file_data_by_subtype(s)
-                } else {
-                    Err(PackerError::FileNotFound(subtype.to_string()))
-                }
+                self.get_boot0_fallback_subtype(secure)
+                    .filter(|fallback| *fallback != subtype)
+                    .map_or_else(
+                        || Err(PackerError::FileNotFound(subtype.to_string())),
+                        |fallback| packer.find_file_data_by_subtype(fallback),
+                    )
             });
 
             match boot0_data {
@@ -164,12 +166,7 @@ impl<'a> BootDownload<'a> {
     }
 
     /// Verify boot image download
-    async fn verify_boot(
-        &self,
-        ctx: &libefex::Context,
-        data_type: u32,
-        name: &str,
-    ) -> FlashResult<()> {
+    async fn verify_boot<C: FesOps>(&self, ctx: &C, data_type: u32, name: &str) -> FlashResult<()> {
         let verify = ctx
             .fes_verify_status(data_type)
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
@@ -204,9 +201,9 @@ impl<'a> BootDownload<'a> {
             BOOT_FILE_MODE_TOC => Some(("12345678", "TOC1_00000000000")),
             BOOT_FILE_MODE_PKG => {
                 if StorageType::from(storage_type) == StorageType::Spinor {
-                    Some(("12345678", "BOOTPKG-NOR00000"))
+                    Some(("BOOTPKG", "BOOTPKG-NOR00000"))
                 } else {
-                    Some(("12345678", "BOOTPKG-00000000"))
+                    Some(("BOOTPKG", "BOOTPKG-00000000"))
                 }
             }
             _ => None,
@@ -236,11 +233,21 @@ impl<'a> BootDownload<'a> {
             }
         }
     }
+
+    fn get_boot0_fallback_subtype(&self, secure: u32) -> Option<&'static str> {
+        match secure {
+            BOOT_FILE_MODE_NORMAL | BOOT_FILE_MODE_PKG => Some("1234567890BOOT_0"),
+            BOOT_FILE_MODE_TOC => Some("TOC0_00000000000"),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flash::protocol::tests::MockProtocol;
+    use crate::test_support::{test_firmware, FirmwareEntry};
 
     #[test]
     fn selects_preboot_item_for_each_supported_boot_mode() {
@@ -265,5 +272,281 @@ mod tests {
     #[test]
     fn preboot_verify_type_matches_efex_protocol() {
         assert_eq!(fes_data_type::PREBOOT, 0x7f08);
+    }
+
+    #[test]
+    fn boot_item_selection_covers_modes_and_storage_types() {
+        let logger = Logger::new();
+        let downloader = BootDownload::new(&logger);
+        assert_eq!(
+            downloader.get_boot1_subtype(BOOT_FILE_MODE_NORMAL, 8),
+            Some(("12345678", "UBOOT_0000000000"))
+        );
+        assert_eq!(
+            downloader.get_boot1_subtype(BOOT_FILE_MODE_TOC, 8),
+            Some(("12345678", "TOC1_00000000000"))
+        );
+        assert_eq!(
+            downloader.get_boot1_subtype(BOOT_FILE_MODE_PKG, StorageType::Spinor as u32),
+            Some(("BOOTPKG", "BOOTPKG-NOR00000"))
+        );
+        assert_eq!(
+            downloader.get_boot1_subtype(BOOT_FILE_MODE_PKG, StorageType::Ufs as u32),
+            Some(("BOOTPKG", "BOOTPKG-00000000"))
+        );
+        assert_eq!(downloader.get_boot1_subtype(u32::MAX, 0), None);
+
+        let normal_cases = [
+            (StorageType::Nand, "BOOT0_0000000000"),
+            (StorageType::Spinand, "BOOT0_0000000000"),
+            (StorageType::Sdcard, "1234567890BOOT_0"),
+            (StorageType::Emmc, "1234567890BOOT_0"),
+            (StorageType::Emmc3, "1234567890BOOT_0"),
+            (StorageType::Emmc0, "1234567890BOOT_0"),
+            (StorageType::Spinor, "1234567890BNOR_0"),
+            (StorageType::Ufs, "1234567890BUFS_0"),
+            (StorageType::Auto, "1234567890BOOT_0"),
+        ];
+        for (storage, expected) in normal_cases {
+            assert_eq!(
+                downloader.get_boot0_subtype(BOOT_FILE_MODE_NORMAL, storage as u32),
+                Some(expected)
+            );
+        }
+        let toc_cases = [
+            (StorageType::Sdcard, "TOC0_SDCARD00000"),
+            (StorageType::Sd1, "TOC0_SDCARD00000"),
+            (StorageType::Nand, "TOC0_NAND0000000"),
+            (StorageType::Spinand, "TOC0_NAND0000000"),
+            (StorageType::Spinor, "TOC0_SPINOR00000"),
+            (StorageType::Ufs, "TOC0_UFS00000000"),
+            (StorageType::Auto, "TOC0_00000000000"),
+        ];
+        for (storage, expected) in toc_cases {
+            assert_eq!(
+                downloader.get_boot0_subtype(BOOT_FILE_MODE_TOC, storage as u32),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            downloader.get_boot0_fallback_subtype(BOOT_FILE_MODE_NORMAL),
+            Some("1234567890BOOT_0")
+        );
+        assert_eq!(
+            downloader.get_boot0_fallback_subtype(BOOT_FILE_MODE_TOC),
+            Some("TOC0_00000000000")
+        );
+        assert_eq!(downloader.get_boot0_fallback_subtype(u32::MAX), None);
+    }
+
+    #[tokio::test]
+    async fn toc_execute_sends_preboot_boot1_boot0_in_order_and_verifies_each() {
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "preboot.fex",
+                maintype: "12345678",
+                subtype: "TOC0_PREBOOT0000",
+                data: b"preboot",
+            },
+            FirmwareEntry {
+                filename: "toc1.fex",
+                maintype: "12345678",
+                subtype: "TOC1_00000000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "toc0.fex",
+                maintype: "12345678",
+                subtype: "TOC0_UFS00000000",
+                data: b"boot0",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let downloader = BootDownload::new(&logger);
+        let ctx = MockProtocol::default();
+
+        downloader
+            .execute(
+                &ctx,
+                &mut packer,
+                BOOT_FILE_MODE_TOC,
+                StorageType::Ufs as u32,
+            )
+            .await
+            .unwrap();
+
+        let downloads = ctx.downloads.borrow();
+        assert_eq!(downloads.len(), 3);
+        assert_eq!(downloads[0].data_type, FesDataType::Preboot);
+        assert_eq!(downloads[1].data_type, FesDataType::Boot1);
+        assert_eq!(downloads[2].data_type, FesDataType::Boot0);
+        assert_eq!(
+            &*ctx.verify_status_calls.borrow(),
+            &[
+                fes_data_type::PREBOOT,
+                fes_data_type::BOOT1,
+                fes_data_type::BOOT0
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn preboot_is_optional_and_generic_boot0_is_a_real_fallback() {
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "uboot.fex",
+                maintype: "12345678",
+                subtype: "UBOOT_0000000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "boot0.fex",
+                maintype: "12345678",
+                subtype: "1234567890BOOT_0",
+                data: b"generic",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let downloader = BootDownload::new(&logger);
+        let ctx = MockProtocol::default();
+        downloader
+            .execute(
+                &ctx,
+                &mut packer,
+                BOOT_FILE_MODE_NORMAL,
+                StorageType::Ufs as u32,
+            )
+            .await
+            .unwrap();
+        let downloads = ctx.downloads.borrow();
+        assert_eq!(downloads.len(), 2);
+        assert_eq!(downloads[1].data, b"generic");
+    }
+
+    #[tokio::test]
+    async fn package_mode_uses_bootpkg_maintype() {
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "boot-package.fex",
+                maintype: "BOOTPKG",
+                subtype: "BOOTPKG-00000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "boot0.fex",
+                maintype: "12345678",
+                subtype: "1234567890BOOT_0",
+                data: b"boot0",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        BootDownload::new(&logger)
+            .execute(
+                &ctx,
+                &mut packer,
+                BOOT_FILE_MODE_PKG,
+                StorageType::Emmc as u32,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ctx.downloads.borrow()[0].data_type, FesDataType::Boot1);
+    }
+
+    #[tokio::test]
+    async fn missing_required_boot_items_and_protocol_errors_are_reported() {
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let downloader = BootDownload::new(&logger);
+        let ctx = MockProtocol::default();
+
+        let empty = test_firmware(&[]);
+        let mut packer = OpenixPacker::new();
+        packer.load(empty.path()).unwrap();
+        assert!(matches!(
+            downloader
+                .execute(
+                    &ctx,
+                    &mut packer,
+                    BOOT_FILE_MODE_NORMAL,
+                    StorageType::Ufs as u32
+                )
+                .await,
+            Err(FlashError::Boot1NotFound)
+        ));
+
+        let boot1_only = test_firmware(&[FirmwareEntry {
+            filename: "uboot.fex",
+            maintype: "12345678",
+            subtype: "UBOOT_0000000000",
+            data: b"boot1",
+        }]);
+        let mut packer = OpenixPacker::new();
+        packer.load(boot1_only.path()).unwrap();
+        assert!(matches!(
+            downloader
+                .execute(
+                    &ctx,
+                    &mut packer,
+                    BOOT_FILE_MODE_NORMAL,
+                    StorageType::Ufs as u32
+                )
+                .await,
+            Err(FlashError::Boot0NotFound)
+        ));
+
+        let complete = test_firmware(&[
+            FirmwareEntry {
+                filename: "uboot.fex",
+                maintype: "12345678",
+                subtype: "UBOOT_0000000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "boot0.fex",
+                maintype: "12345678",
+                subtype: "1234567890BUFS_0",
+                data: b"boot0",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(complete.path()).unwrap();
+        let failed_down = MockProtocol::default();
+        *failed_down.fail_down.borrow_mut() = Some("down".to_string());
+        assert!(matches!(
+            downloader
+                .execute(
+                    &failed_down,
+                    &mut packer,
+                    BOOT_FILE_MODE_NORMAL,
+                    StorageType::Ufs as u32
+                )
+                .await,
+            Err(FlashError::UsbTransferError(_))
+        ));
+
+        let mut packer = OpenixPacker::new();
+        packer.load(complete.path()).unwrap();
+        let failed_verify = MockProtocol::default();
+        failed_verify
+            .verify_statuses
+            .borrow_mut()
+            .push_back(Err("verify".to_string()));
+        assert!(matches!(
+            downloader
+                .execute(
+                    &failed_verify,
+                    &mut packer,
+                    BOOT_FILE_MODE_NORMAL,
+                    StorageType::Ufs as u32
+                )
+                .await,
+            Err(FlashError::UsbTransferError(_))
+        ));
     }
 }

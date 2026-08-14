@@ -65,3 +65,41 @@ impl Default for FlashStages {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructors_define_expected_fel_and_fes_sequences() {
+        assert!(FlashStages::new().stages().is_empty());
+        assert!(FlashStages::default().stages().is_empty());
+        assert_eq!(
+            FlashStages::for_fel_mode().stages(),
+            &[
+                StageType::Init,
+                StageType::FelDram,
+                StageType::FelUboot,
+                StageType::FelReconnect,
+                StageType::FesQuery,
+                StageType::FesErase,
+                StageType::FesMbr,
+                StageType::FesPartitions,
+                StageType::FesBoot,
+                StageType::FesMode,
+            ]
+        );
+        assert_eq!(
+            FlashStages::for_fes_mode().stages(),
+            &[
+                StageType::Init,
+                StageType::FesQuery,
+                StageType::FesErase,
+                StageType::FesMbr,
+                StageType::FesPartitions,
+                StageType::FesBoot,
+                StageType::FesMode,
+            ]
+        );
+    }
+}

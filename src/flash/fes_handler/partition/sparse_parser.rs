@@ -8,12 +8,13 @@ use super::super::types::PartitionDownloadInfo;
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::sparse::{
     sparse_format_probe, ChunkHeader, LastChunkType, ParseState, CHUNK_HEADER_SIZE,
-    CHUNK_TYPE_DONT_CARE, CHUNK_TYPE_FILL, CHUNK_TYPE_RAW, SPARSE_HEADER_SIZE,
+    CHUNK_TYPE_CRC32, CHUNK_TYPE_DONT_CARE, CHUNK_TYPE_FILL, CHUNK_TYPE_RAW, SPARSE_HEADER_SIZE,
 };
 use crate::firmware::OpenixPacker;
+use crate::flash::protocol::FesOps;
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -44,48 +45,29 @@ impl<'a> SparseDownloader<'a> {
     /// Execute sparse partition download
     ///
     /// Reads partition data and downloads using sparse format parser
-    pub async fn execute(
+    pub async fn execute<C: FesOps>(
         &self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         info: &PartitionDownloadInfo,
         verify: bool,
     ) -> FlashResult<()> {
         let total_size = info.data_length;
-        let mut all_data = Vec::with_capacity(total_size as usize);
-
-        let mut offset: u64 = 0;
-        while offset < total_size {
-            let chunk_size = std::cmp::min(constants::BUFFER_SIZE as u64, total_size - offset);
-            let chunk_data = packer
-                .get_file_data_range_by_maintype_subtype(
-                    super::super::types::ITEM_ROOTFSFAT16,
-                    &info.download_subtype,
-                    offset,
-                    chunk_size,
-                )
-                .or_else(|_| {
-                    packer.get_file_data_range_by_maintype_subtype(
-                        "12345678",
-                        &info.download_subtype,
-                        offset,
-                        chunk_size,
-                    )
-                })
-                .map_err(|e| FlashError::InvalidFirmwareFormat(e.to_string()))?;
-            all_data.extend_from_slice(&chunk_data);
-            offset += chunk_size;
-        }
-
-        let mut cursor = Cursor::new(all_data);
+        let start_sector = u32::try_from(info.partition_address).map_err(|_| {
+            FlashError::InvalidFirmwareFormat(format!(
+                "Partition {} address exceeds FES sector range: {}",
+                info.partition_name, info.partition_address
+            ))
+        })?;
+        let mut reader = PackerEntryReader::new(packer, &info.download_subtype, total_size);
 
         self.download_sparse_from_reader(
             ctx,
-            &mut cursor,
+            &mut reader,
             &SparseDownloadParams {
                 data_offset: 0,
                 data_length: total_size,
-                start_sector: info.partition_address as u32,
+                start_sector,
                 partition_name: &info.partition_name,
                 verify_enabled: verify,
             },
@@ -103,9 +85,9 @@ impl<'a> SparseDownloader<'a> {
     /// Download sparse data from a reader
     ///
     /// Parses sparse format and downloads chunks to device
-    async fn download_sparse_from_reader<R: Read + Seek>(
+    async fn download_sparse_from_reader<C: FesOps, R: Read + Seek>(
         &self,
-        ctx: &libefex::Context,
+        ctx: &C,
         file: &mut R,
         params: &SparseDownloadParams<'_>,
     ) -> FlashResult<()> {
@@ -146,7 +128,13 @@ impl<'a> SparseDownloader<'a> {
 
         let mut buffer = vec![0u8; constants::BUFFER_SIZE];
 
-        let first_read_size = std::cmp::min(constants::BUFFER_SIZE, data_length as usize);
+        let first_read_size = usize::try_from(std::cmp::min(
+            constants::BUFFER_SIZE as u64,
+            data_length,
+        ))
+        .map_err(|_| {
+            FlashError::InvalidFirmwareFormat("Sparse initial read size overflow".to_string())
+        })?;
         file.seek(SeekFrom::Start(data_offset)).map_err(|e| {
             FlashError::InvalidFirmwareFormat(format!("Failed to seek file offset: {}", e))
         })?;
@@ -160,9 +148,9 @@ impl<'a> SparseDownloader<'a> {
             .parse_and_download(ctx, &read_buf, first_read_size)
             .await?;
 
-        let mut left_len = data_length as i64 - first_read_size as i64;
+        let mut consumed = first_read_size as u64;
 
-        while left_len >= constants::BUFFER_SIZE as i64 {
+        while data_length.saturating_sub(consumed) >= constants::BUFFER_SIZE as u64 {
             file.read_exact(&mut buffer).map_err(|e| {
                 FlashError::InvalidFirmwareFormat(format!("Failed to read data chunk: {}", e))
             })?;
@@ -171,11 +159,13 @@ impl<'a> SparseDownloader<'a> {
                 .parse_and_download(ctx, &buffer, constants::BUFFER_SIZE)
                 .await?;
 
-            left_len -= constants::BUFFER_SIZE as i64;
+            consumed += constants::BUFFER_SIZE as u64;
         }
 
-        if left_len > 0 {
-            let remaining = left_len as usize;
+        let remaining = usize::try_from(data_length.saturating_sub(consumed)).map_err(|_| {
+            FlashError::InvalidFirmwareFormat("Sparse remaining size overflow".to_string())
+        })?;
+        if remaining > 0 {
             let mut remaining_buf = vec![0u8; remaining];
             file.read_exact(&mut remaining_buf).map_err(|e| {
                 FlashError::InvalidFirmwareFormat(format!("Failed to read remaining data: {}", e))
@@ -185,6 +175,8 @@ impl<'a> SparseDownloader<'a> {
                 .parse_and_download(ctx, &remaining_buf, remaining)
                 .await?;
         }
+
+        parser.finish(total_chunks, total_blks)?;
 
         if parser.need_verify() {
             self.logger.info(&format!(
@@ -229,6 +221,71 @@ impl<'a> SparseDownloader<'a> {
     }
 }
 
+struct PackerEntryReader<'a> {
+    packer: &'a mut OpenixPacker,
+    subtype: &'a str,
+    length: u64,
+    position: u64,
+}
+
+impl<'a> PackerEntryReader<'a> {
+    fn new(packer: &'a mut OpenixPacker, subtype: &'a str, length: u64) -> Self {
+        Self {
+            packer,
+            subtype,
+            length,
+            position: 0,
+        }
+    }
+}
+
+impl Read for PackerEntryReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() || self.position >= self.length {
+            return Ok(0);
+        }
+        let length = std::cmp::min(buffer.len() as u64, self.length - self.position);
+        let data = self
+            .packer
+            .get_file_data_range_by_maintype_subtype(
+                super::super::types::ITEM_ROOTFSFAT16,
+                self.subtype,
+                self.position,
+                length,
+            )
+            .or_else(|_| {
+                self.packer.get_file_data_range_by_maintype_subtype(
+                    "12345678",
+                    self.subtype,
+                    self.position,
+                    length,
+                )
+            })
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        buffer[..data.len()].copy_from_slice(&data);
+        self.position += data.len() as u64;
+        Ok(data.len())
+    }
+}
+
+impl Seek for PackerEntryReader<'_> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        let next = match position {
+            SeekFrom::Start(value) => i128::from(value),
+            SeekFrom::Current(value) => i128::from(self.position) + i128::from(value),
+            SeekFrom::End(value) => i128::from(self.length) + i128::from(value),
+        };
+        if !(0..=i128::from(u64::MAX)).contains(&next) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid sparse entry seek",
+            ));
+        }
+        self.position = next as u64;
+        Ok(self.position)
+    }
+}
+
 /// Parameters for sparse download operation
 struct SparseDownloadParams<'a> {
     data_offset: u64,
@@ -245,7 +302,7 @@ struct SparseParser<'a> {
     state: ParseState,
     last_chunk_type: LastChunkType,
     block_size: u32,
-    chunk_length: u32,
+    chunk_length: u64,
     flash_sector: u32,
     last_rest_size: usize,
     last_rest_data: Vec<u8>,
@@ -254,6 +311,8 @@ struct SparseParser<'a> {
     checksum: u32,
     verify_enabled: bool,
     total_written: u64,
+    chunks_seen: u32,
+    logical_blocks: u64,
     logger: &'a Logger,
     written_bytes: Arc<AtomicU64>,
     last_speed_update: Arc<AtomicU64>,
@@ -282,6 +341,8 @@ impl<'a> SparseParser<'a> {
             checksum: 0,
             verify_enabled,
             total_written: 0,
+            chunks_seen: 0,
+            logical_blocks: 0,
             logger,
             written_bytes,
             last_speed_update,
@@ -308,16 +369,46 @@ impl<'a> SparseParser<'a> {
         self.total_written
     }
 
+    fn finish(&self, expected_chunks: u32, expected_blocks: u32) -> FlashResult<()> {
+        if self.last_rest_size != 0 || self.state != ParseState::ChunkHead || self.chunk_length != 0
+        {
+            return Err(FlashError::InvalidFirmwareFormat(
+                "Truncated sparse chunk data".to_string(),
+            ));
+        }
+        if self.chunks_seen != expected_chunks {
+            return Err(FlashError::InvalidFirmwareFormat(format!(
+                "Sparse chunk count mismatch: expected {}, got {}",
+                expected_chunks, self.chunks_seen
+            )));
+        }
+        if self.logical_blocks != u64::from(expected_blocks) {
+            return Err(FlashError::InvalidFirmwareFormat(format!(
+                "Sparse block count mismatch: expected {}, got {}",
+                expected_blocks, self.logical_blocks
+            )));
+        }
+        Ok(())
+    }
+
     /// Parse and download sparse chunks
     ///
     /// Processes buffer data and downloads chunks to device
-    pub async fn parse_and_download(
+    pub async fn parse_and_download<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         buffer: &[u8],
         length: usize,
     ) -> FlashResult<()> {
         use crate::firmware::sparse::{ALIGNMENT_SIZE, MIN_DOWNLOAD_SIZE, SECTOR_SIZE};
+
+        if length > buffer.len() {
+            return Err(FlashError::InvalidFirmwareFormat(format!(
+                "Sparse input length {} exceeds buffer size {}",
+                length,
+                buffer.len()
+            )));
+        }
 
         let combined_data: Vec<u8>;
         let work_buffer: &[u8];
@@ -368,7 +459,18 @@ impl<'a> SparseParser<'a> {
                     offset += CHUNK_HEADER_SIZE;
                     this_rest_size -= CHUNK_HEADER_SIZE;
 
-                    self.chunk_length = chunk_sz * self.block_size;
+                    self.chunks_seen = self.chunks_seen.checked_add(1).ok_or_else(|| {
+                        FlashError::InvalidFirmwareFormat("Sparse chunk count overflow".to_string())
+                    })?;
+                    self.logical_blocks = self
+                        .logical_blocks
+                        .checked_add(u64::from(chunk_sz))
+                        .ok_or_else(|| {
+                            FlashError::InvalidFirmwareFormat(
+                                "Sparse logical block count overflow".to_string(),
+                            )
+                        })?;
+                    self.chunk_length = u64::from(chunk_sz) * u64::from(self.block_size);
 
                     if self.verify_enabled
                         && self.last_chunk_type == LastChunkType::Raw
@@ -384,7 +486,7 @@ impl<'a> SparseParser<'a> {
 
                     match chunk_type {
                         CHUNK_TYPE_RAW => {
-                            if total_sz != self.chunk_length + CHUNK_HEADER_SIZE as u32 {
+                            if u64::from(total_sz) != self.chunk_length + CHUNK_HEADER_SIZE as u64 {
                                 return Err(FlashError::InvalidFirmwareFormat(
                                     "Invalid RAW chunk size".to_string(),
                                 ));
@@ -430,8 +532,32 @@ impl<'a> SparseParser<'a> {
 
                             self.flash_sector = self
                                 .flash_sector
-                                .wrapping_add(self.chunk_length / SECTOR_SIZE as u32);
+                                .checked_add(
+                                    u32::try_from(self.chunk_length / SECTOR_SIZE).map_err(
+                                        |_| {
+                                            FlashError::InvalidFirmwareFormat(
+                                                "DONT_CARE chunk exceeds FES sector range"
+                                                    .to_string(),
+                                            )
+                                        },
+                                    )?,
+                                )
+                                .ok_or_else(|| {
+                                    FlashError::InvalidFirmwareFormat(
+                                        "DONT_CARE address exceeds FES sector range".to_string(),
+                                    )
+                                })?;
                             self.state = ParseState::ChunkHead;
+                            self.last_chunk_type = LastChunkType::DontCare;
+                        }
+
+                        CHUNK_TYPE_CRC32 => {
+                            if total_sz != CHUNK_HEADER_SIZE as u32 + 4 || chunk_sz != 0 {
+                                return Err(FlashError::InvalidFirmwareFormat(
+                                    "Invalid CRC32 chunk size".to_string(),
+                                ));
+                            }
+                            self.state = ParseState::ChunkCrcData;
                             self.last_chunk_type = LastChunkType::DontCare;
                         }
 
@@ -445,14 +571,19 @@ impl<'a> SparseParser<'a> {
                 }
 
                 ParseState::ChunkData => {
-                    let unenough_length = self.chunk_length.saturating_sub(this_rest_size as u32);
+                    let unenough_length = self.chunk_length.saturating_sub(this_rest_size as u64);
 
                     if unenough_length == 0 {
-                        let data = &work_buffer[offset..offset + self.chunk_length as usize];
+                        let chunk_length = usize::try_from(self.chunk_length).map_err(|_| {
+                            FlashError::InvalidFirmwareFormat(
+                                "Sparse RAW chunk exceeds host address space".to_string(),
+                            )
+                        })?;
+                        let data = &work_buffer[offset..offset + chunk_length];
                         self.download_data(ctx, data, true)?;
 
-                        this_rest_size -= self.chunk_length as usize;
-                        offset += self.chunk_length as usize;
+                        this_rest_size -= chunk_length;
+                        offset += chunk_length;
                         self.chunk_length = 0;
                         self.state = ParseState::ChunkHead;
                     } else {
@@ -461,7 +592,7 @@ impl<'a> SparseParser<'a> {
                             return Ok(());
                         }
 
-                        let download_size = if unenough_length < ALIGNMENT_SIZE as u32 {
+                        let download_size = if unenough_length < ALIGNMENT_SIZE as u64 {
                             this_rest_size + unenough_length as usize - ALIGNMENT_SIZE
                         } else {
                             this_rest_size & !(ALIGNMENT_SIZE - 1)
@@ -471,7 +602,7 @@ impl<'a> SparseParser<'a> {
                         self.download_data(ctx, data, true)?;
 
                         offset += download_size;
-                        self.chunk_length -= download_size as u32;
+                        self.chunk_length -= download_size as u64;
                         this_rest_size -= download_size;
 
                         self.save_rest_data(work_buffer, offset, this_rest_size);
@@ -504,6 +635,16 @@ impl<'a> SparseParser<'a> {
                     self.chunk_length = 0;
                     self.state = ParseState::ChunkHead;
                 }
+
+                ParseState::ChunkCrcData => {
+                    if this_rest_size < 4 {
+                        self.save_rest_data(work_buffer, offset, this_rest_size);
+                        return Ok(());
+                    }
+                    offset += 4;
+                    this_rest_size -= 4;
+                    self.state = ParseState::ChunkHead;
+                }
             }
         }
 
@@ -519,9 +660,9 @@ impl<'a> SparseParser<'a> {
     }
 
     /// Download data to device
-    fn download_data(
+    fn download_data<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         data: &[u8],
         update_verify: bool,
     ) -> FlashResult<()> {
@@ -536,6 +677,17 @@ impl<'a> SparseParser<'a> {
         let last_speed_update = Arc::clone(&self.last_speed_update);
         let logger = self.logger;
         let chunk_base_bytes = self.written_bytes.load(Ordering::SeqCst);
+        let data_length = u64::try_from(data.len()).map_err(|_| {
+            FlashError::InvalidFirmwareFormat("Sparse write exceeds host address space".to_string())
+        })?;
+        let sector_count = u32::try_from(data_length / SECTOR_SIZE).map_err(|_| {
+            FlashError::InvalidFirmwareFormat("Sparse write exceeds FES sector range".to_string())
+        })?;
+        let next_sector = self.flash_sector.checked_add(sector_count).ok_or_else(|| {
+            FlashError::InvalidFirmwareFormat(
+                "Sparse write address exceeds FES sector range".to_string(),
+            )
+        })?;
 
         let written = ctx
             .fes_down_with_progress(data, sector, FesDataType::Flash, move |written, _total| {
@@ -550,27 +702,33 @@ impl<'a> SparseParser<'a> {
             })
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
+        if written != data.len() as u64 {
+            return Err(FlashError::PartitionDownloadFailed(format!(
+                "Short sparse write: expected {} bytes, wrote {}",
+                data.len(),
+                written
+            )));
+        }
+
         if update_verify {
             self.checksum = add_sum(data, self.checksum);
             self.rawdata_size += written;
         }
         self.total_written += written;
-        self.flash_sector = self
-            .flash_sector
-            .wrapping_add((written / SECTOR_SIZE) as u32);
+        self.flash_sector = next_sector;
 
         Ok(())
     }
 
     /// Process fill chunk (write repeated pattern)
-    fn process_fill_chunk(&mut self, ctx: &libefex::Context, fill_value: u32) -> FlashResult<()> {
+    fn process_fill_chunk<C: FesOps>(&mut self, ctx: &C, fill_value: u32) -> FlashResult<()> {
         use crate::firmware::sparse::{MAX_FILL_COUNT, SECTOR_SIZE};
 
         if self.chunk_length == 0 {
             return Ok(());
         }
 
-        if !self.chunk_length.is_multiple_of(SECTOR_SIZE as u32) {
+        if !self.chunk_length.is_multiple_of(SECTOR_SIZE) {
             return Err(FlashError::InvalidFirmwareFormat(
                 "Fill data is not sector aligned".to_string(),
             ));
@@ -589,13 +747,17 @@ impl<'a> SparseParser<'a> {
 
         let mut remaining = self.chunk_length;
 
-        while remaining >= MAX_FILL_COUNT * 16 {
+        while remaining >= u64::from(MAX_FILL_COUNT * 16) {
             self.download_data(ctx, &fill_buffer, false)?;
-            remaining -= MAX_FILL_COUNT * 16;
+            remaining -= u64::from(MAX_FILL_COUNT * 16);
         }
 
         if remaining > 0 {
-            let remaining_usize = remaining as usize;
+            let remaining_usize = usize::try_from(remaining).map_err(|_| {
+                FlashError::InvalidFirmwareFormat(
+                    "Sparse fill chunk exceeds host address space".to_string(),
+                )
+            })?;
             self.download_data(ctx, &fill_buffer[..remaining_usize], false)?;
         }
 
@@ -603,7 +765,7 @@ impl<'a> SparseParser<'a> {
     }
 
     /// Verify last RAW chunk
-    async fn verify_last_chunk(&mut self, ctx: &libefex::Context) -> FlashResult<()> {
+    async fn verify_last_chunk<C: FesOps>(&mut self, ctx: &C) -> FlashResult<()> {
         if self.rawdata_size == 0 {
             return Ok(());
         }
@@ -644,5 +806,471 @@ impl<'a> SparseParser<'a> {
                 "Verification timeout: device did not return valid CRC".to_string(),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::firmware::sparse::{
+        add_sum, SparseHeader, CHUNK_TYPE_CRC32, SPARSE_HEADER_MAGIC, SPARSE_HEADER_MAJOR_VER,
+    };
+    use crate::flash::protocol::{tests::MockProtocol, VerifyResponse};
+    use crate::test_support::{test_firmware, write_struct, FirmwareEntry};
+    use std::io::Cursor;
+
+    fn logger() -> Logger {
+        Logger::for_events(false, crate::flash::FlashEventSink::none())
+    }
+
+    fn sparse_header(blocks: u32, chunks: u32) -> SparseHeader {
+        SparseHeader {
+            magic: SPARSE_HEADER_MAGIC,
+            major_version: SPARSE_HEADER_MAJOR_VER,
+            minor_version: 0,
+            file_hdr_sz: SPARSE_HEADER_SIZE as u16,
+            chunk_hdr_sz: CHUNK_HEADER_SIZE as u16,
+            blk_sz: 512,
+            total_blks: blocks,
+            total_chunks: chunks,
+            image_checksum: 0,
+        }
+    }
+
+    fn append_struct<T: Copy>(bytes: &mut Vec<u8>, value: &T) {
+        let start = bytes.len();
+        bytes.resize(start + std::mem::size_of::<T>(), 0);
+        write_struct(&mut bytes[start..], value);
+    }
+
+    fn raw_sparse(payload: &[u8; 512]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        append_struct(&mut bytes, &sparse_header(1, 1));
+        append_struct(
+            &mut bytes,
+            &ChunkHeader {
+                chunk_type: CHUNK_TYPE_RAW,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: CHUNK_HEADER_SIZE as u32 + 512,
+            },
+        );
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    fn mixed_sparse(payload: &[u8; 512]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        append_struct(&mut bytes, &sparse_header(3, 4));
+        append_struct(
+            &mut bytes,
+            &ChunkHeader {
+                chunk_type: CHUNK_TYPE_RAW,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: CHUNK_HEADER_SIZE as u32 + 512,
+            },
+        );
+        bytes.extend_from_slice(payload);
+        append_struct(
+            &mut bytes,
+            &ChunkHeader {
+                chunk_type: CHUNK_TYPE_FILL,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: CHUNK_HEADER_SIZE as u32 + 4,
+            },
+        );
+        bytes.extend_from_slice(&0xaabb_ccddu32.to_le_bytes());
+        append_struct(
+            &mut bytes,
+            &ChunkHeader {
+                chunk_type: CHUNK_TYPE_DONT_CARE,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: CHUNK_HEADER_SIZE as u32,
+            },
+        );
+        append_struct(
+            &mut bytes,
+            &ChunkHeader {
+                chunk_type: CHUNK_TYPE_CRC32,
+                reserved: 0,
+                chunk_sz: 0,
+                total_sz: CHUNK_HEADER_SIZE as u32 + 4,
+            },
+        );
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes
+    }
+
+    fn info(length: usize) -> PartitionDownloadInfo {
+        PartitionDownloadInfo {
+            partition_name: "system".to_string(),
+            partition_address: 0x20,
+            download_filename: "system.img".to_string(),
+            download_subtype: "SYSTEM0000000000".to_string(),
+            data_offset: 0,
+            data_length: length as u64,
+        }
+    }
+
+    fn new_parser(logger: &Logger, verify: bool) -> SparseParser<'_> {
+        SparseParser::new(
+            512,
+            0x20,
+            verify,
+            logger,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    #[tokio::test]
+    async fn execute_streams_primary_and_fallback_entries_and_verifies_raw_data() {
+        let payload = [0x5au8; 512];
+        let sparse = raw_sparse(&payload);
+        for maintype in [super::super::super::types::ITEM_ROOTFSFAT16, "12345678"] {
+            let firmware = test_firmware(&[FirmwareEntry {
+                filename: "system.img",
+                maintype,
+                subtype: "SYSTEM0000000000",
+                data: &sparse,
+            }]);
+            let mut packer = OpenixPacker::new();
+            packer.load(firmware.path()).unwrap();
+            let logger = logger();
+            let ctx = MockProtocol::default();
+            ctx.verify_values
+                .borrow_mut()
+                .push_back(Ok(
+                    MockProtocol::valid_response(add_sum(&payload, 0) as i32),
+                ));
+            SparseDownloader::new(
+                &logger,
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            )
+            .execute(&ctx, &mut packer, &info(sparse.len()), true)
+            .await
+            .unwrap();
+            let downloads = ctx.downloads.borrow();
+            assert_eq!(downloads.len(), 1);
+            assert_eq!(downloads[0].addr, 0x20);
+            assert_eq!(downloads[0].data, payload);
+            assert_eq!(&*ctx.verify_value_calls.borrow(), &[(0x20, 512)]);
+        }
+
+        let empty = test_firmware(&[]);
+        let mut packer = OpenixPacker::new();
+        packer.load(empty.path()).unwrap();
+        let logger = logger();
+        let ctx = MockProtocol::default();
+        let mut invalid = info(1);
+        invalid.partition_address = u64::from(u32::MAX) + 1;
+        assert!(matches!(
+            SparseDownloader::new(
+                &logger,
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+            )
+            .execute(&ctx, &mut packer, &invalid, false)
+            .await,
+            Err(FlashError::InvalidFirmwareFormat(_))
+        ));
+        assert!(ctx.downloads.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mixed_chunks_verify_transition_write_fill_skip_holes_and_consume_crc() {
+        let payload = [1u8; 512];
+        let sparse = mixed_sparse(&payload);
+        let firmware = test_firmware(&[FirmwareEntry {
+            filename: "system.img",
+            maintype: "RFSFAT16",
+            subtype: "SYSTEM0000000000",
+            data: &sparse,
+        }]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let logger = logger();
+        let ctx = MockProtocol::default();
+        ctx.verify_values
+            .borrow_mut()
+            .push_back(Ok(
+                MockProtocol::valid_response(add_sum(&payload, 0) as i32),
+            ));
+        SparseDownloader::new(
+            &logger,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        )
+        .execute(&ctx, &mut packer, &info(sparse.len()), true)
+        .await
+        .unwrap();
+
+        let downloads = ctx.downloads.borrow();
+        assert_eq!(downloads.len(), 2);
+        assert_eq!(downloads[0].addr, 0x20);
+        assert_eq!(downloads[1].addr, 0x21);
+        assert_eq!(&downloads[1].data[..4], &0xaabb_ccddu32.to_le_bytes());
+        assert_eq!(ctx.verify_value_calls.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn truncated_and_count_mismatched_sparse_images_are_rejected() {
+        let mut cases = Vec::new();
+        let mut missing_chunk = Vec::new();
+        append_struct(&mut missing_chunk, &sparse_header(1, 1));
+        cases.push(missing_chunk);
+
+        let mut truncated_raw = Vec::new();
+        append_struct(&mut truncated_raw, &sparse_header(1, 1));
+        append_struct(
+            &mut truncated_raw,
+            &ChunkHeader {
+                chunk_type: CHUNK_TYPE_RAW,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: CHUNK_HEADER_SIZE as u32 + 512,
+            },
+        );
+        truncated_raw.extend_from_slice(&[0; 100]);
+        cases.push(truncated_raw);
+
+        let payload = [0u8; 512];
+        let mut wrong_blocks = raw_sparse(&payload);
+        let header = sparse_header(2, 1);
+        write_struct(&mut wrong_blocks[..SPARSE_HEADER_SIZE], &header);
+        cases.push(wrong_blocks);
+
+        for data in cases {
+            let firmware = test_firmware(&[FirmwareEntry {
+                filename: "system.img",
+                maintype: "RFSFAT16",
+                subtype: "SYSTEM0000000000",
+                data: &data,
+            }]);
+            let mut packer = OpenixPacker::new();
+            packer.load(firmware.path()).unwrap();
+            let logger = logger();
+            let ctx = MockProtocol::default();
+            assert!(matches!(
+                SparseDownloader::new(
+                    &logger,
+                    Arc::new(AtomicU64::new(0)),
+                    Arc::new(AtomicU64::new(0))
+                )
+                .execute(&ctx, &mut packer, &info(data.len()), false)
+                .await,
+                Err(FlashError::InvalidFirmwareFormat(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn parser_rejects_invalid_lengths_chunk_headers_and_short_writes() {
+        let logger = logger();
+        let ctx = MockProtocol::default();
+        let mut parser = new_parser(&logger, false);
+        assert!(matches!(
+            parser.parse_and_download(&ctx, &[0], 2).await,
+            Err(FlashError::InvalidFirmwareFormat(_))
+        ));
+
+        for chunk in [
+            ChunkHeader {
+                chunk_type: 0xffff,
+                reserved: 0,
+                chunk_sz: 0,
+                total_sz: 12,
+            },
+            ChunkHeader {
+                chunk_type: CHUNK_TYPE_RAW,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: 12,
+            },
+            ChunkHeader {
+                chunk_type: CHUNK_TYPE_FILL,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: 12,
+            },
+            ChunkHeader {
+                chunk_type: CHUNK_TYPE_DONT_CARE,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: 16,
+            },
+            ChunkHeader {
+                chunk_type: CHUNK_TYPE_CRC32,
+                reserved: 0,
+                chunk_sz: 1,
+                total_sz: 16,
+            },
+        ] {
+            let mut input = vec![0; SPARSE_HEADER_SIZE];
+            append_struct(&mut input, &chunk);
+            let mut parser = new_parser(&logger, false);
+            assert!(matches!(
+                parser.parse_and_download(&ctx, &input, input.len()).await,
+                Err(FlashError::InvalidFirmwareFormat(_))
+            ));
+        }
+
+        let mut direct = new_parser(&logger, false);
+        assert!(direct.download_data(&ctx, &[], true).is_ok());
+        ctx.progress_written_override.set(Some(1));
+        assert!(matches!(
+            direct.download_data(&ctx, &[0; 512], true),
+            Err(FlashError::PartitionDownloadFailed(_))
+        ));
+        ctx.progress_written_override.set(None);
+        *ctx.fail_down.borrow_mut() = Some("usb".to_string());
+        assert!(matches!(
+            direct.download_data(&ctx, &[0; 512], true),
+            Err(FlashError::UsbTransferError(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn parser_handles_fragmented_input_and_verification_failures() {
+        let payload = [7u8; 512];
+        let data = raw_sparse(&payload);
+        let logger = logger();
+        let ctx = MockProtocol::default();
+        let mut parser = new_parser(&logger, true);
+        parser
+            .parse_and_download(&ctx, &data[..10], 10)
+            .await
+            .unwrap();
+        parser
+            .parse_and_download(&ctx, &data[10..], data.len() - 10)
+            .await
+            .unwrap();
+        parser.finish(1, 1).unwrap();
+        assert!(parser.need_verify());
+        assert_eq!(parser.rawdata_info(), (0x20, 512));
+        assert_eq!(parser.total_written(), 512);
+        assert_eq!(parser.checksum(), add_sum(&payload, 0));
+
+        ctx.verify_values
+            .borrow_mut()
+            .push_back(Ok(MockProtocol::valid_response(parser.checksum() as i32)));
+        parser.verify_last_chunk(&ctx).await.unwrap();
+        assert!(!parser.need_verify());
+
+        for response in [
+            Ok(MockProtocol::valid_response(1)),
+            Ok(VerifyResponse {
+                flag: 0,
+                media_crc: 0,
+            }),
+            Err("verify".to_string()),
+        ] {
+            let mut parser = new_parser(&logger, true);
+            parser.last_chunk_type = LastChunkType::Raw;
+            parser.rawdata_size = 512;
+            parser.checksum = 2;
+            let ctx = MockProtocol::default();
+            ctx.verify_values.borrow_mut().push_back(response);
+            assert!(parser.verify_last_chunk(&ctx).await.is_err());
+        }
+
+        let mut empty = new_parser(&logger, true);
+        empty
+            .verify_last_chunk(&MockProtocol::default())
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn fill_processing_checks_alignment_zero_short_write_and_address_overflow() {
+        let logger = logger();
+        let ctx = MockProtocol::default();
+        let mut parser = new_parser(&logger, false);
+        parser.process_fill_chunk(&ctx, 1).unwrap();
+        parser.chunk_length = 1;
+        assert!(matches!(
+            parser.process_fill_chunk(&ctx, 1),
+            Err(FlashError::InvalidFirmwareFormat(_))
+        ));
+        parser.chunk_length = 512;
+        parser.flash_sector = u32::MAX;
+        assert!(matches!(
+            parser.process_fill_chunk(&ctx, 1),
+            Err(FlashError::InvalidFirmwareFormat(_))
+        ));
+        assert!(ctx.downloads.borrow().is_empty());
+    }
+
+    #[test]
+    fn packer_entry_reader_supports_read_seek_fallback_and_errors() {
+        let firmware = test_firmware(&[FirmwareEntry {
+            filename: "system.img",
+            maintype: "12345678",
+            subtype: "SYSTEM0000000000",
+            data: b"abcdef",
+        }]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut reader = PackerEntryReader::new(&mut packer, "SYSTEM0000000000", 6);
+        let mut buffer = [0; 2];
+        assert_eq!(reader.read(&mut buffer).unwrap(), 2);
+        assert_eq!(&buffer, b"ab");
+        assert_eq!(reader.seek(SeekFrom::Current(1)).unwrap(), 3);
+        assert_eq!(reader.seek(SeekFrom::End(-1)).unwrap(), 5);
+        assert_eq!(reader.read(&mut buffer).unwrap(), 1);
+        assert_eq!(reader.read(&mut []).unwrap(), 0);
+        assert!(reader.seek(SeekFrom::Current(-100)).is_err());
+
+        let empty_firmware = test_firmware(&[]);
+        let mut empty_packer = OpenixPacker::new();
+        empty_packer.load(empty_firmware.path()).unwrap();
+        let mut missing = PackerEntryReader::new(&mut empty_packer, "MISSING000000000", 1);
+        assert!(missing.read(&mut buffer).is_err());
+    }
+
+    #[tokio::test]
+    async fn reader_path_reports_short_header_and_bad_seek() {
+        struct BadSeek;
+        impl Read for BadSeek {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Ok(0)
+            }
+        }
+        impl Seek for BadSeek {
+            fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+                Err(io::Error::other("seek"))
+            }
+        }
+
+        let logger = logger();
+        let handler = SparseDownloader::new(
+            &logger,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        );
+        let ctx = MockProtocol::default();
+        let params = SparseDownloadParams {
+            data_offset: 0,
+            data_length: 0,
+            start_sector: 0,
+            partition_name: "system",
+            verify_enabled: false,
+        };
+        assert!(matches!(
+            handler
+                .download_sparse_from_reader(&ctx, &mut BadSeek, &params)
+                .await,
+            Err(FlashError::InvalidFirmwareFormat(_))
+        ));
+        assert!(matches!(
+            handler
+                .download_sparse_from_reader(&ctx, &mut Cursor::new(Vec::<u8>::new()), &params)
+                .await,
+            Err(FlashError::InvalidFirmwareFormat(_))
+        ));
     }
 }

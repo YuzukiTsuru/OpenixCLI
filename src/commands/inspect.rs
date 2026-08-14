@@ -161,3 +161,74 @@ fn truncate(s: &str, n: usize) -> String {
         t
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::firmware::sparse::{
+        SparseHeader, CHUNK_HEADER_SIZE, SPARSE_HEADER_MAGIC, SPARSE_HEADER_MAJOR_VER,
+    };
+    use crate::test_support::{temp_dir, test_firmware, write_struct, FirmwareEntry};
+
+    fn sparse_header_bytes() -> Vec<u8> {
+        let header = SparseHeader {
+            magic: SPARSE_HEADER_MAGIC,
+            major_version: SPARSE_HEADER_MAJOR_VER,
+            minor_version: 0,
+            file_hdr_sz: SPARSE_HEADER_SIZE as u16,
+            chunk_hdr_sz: CHUNK_HEADER_SIZE as u16,
+            blk_sz: 4096,
+            total_blks: 0,
+            total_chunks: 0,
+            image_checksum: 0,
+        };
+        let mut bytes = vec![0; SPARSE_HEADER_SIZE];
+        write_struct(&mut bytes, &header);
+        bytes
+    }
+
+    #[test]
+    fn formatting_helpers_cover_boundaries_and_unicode() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(1023), "1023 B");
+        assert_eq!(human_size(1024), "1.0 KB");
+        assert_eq!(human_size(1024 * 1024), "1.00 MB");
+        assert_eq!(human_size(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(truncate("abcdef", 0), "");
+        assert_eq!(truncate("abc", 3), "abc");
+        assert_eq!(truncate("你好世界", 3), "你好…");
+    }
+
+    #[test]
+    fn sparse_probe_returns_true_false_and_missing() {
+        let sparse = sparse_header_bytes();
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "sparse.img",
+                maintype: "RFSFAT16",
+                subtype: "SPARSE0000000000",
+                data: &sparse,
+            },
+            FirmwareEntry {
+                filename: "raw.img",
+                maintype: "RFSFAT16",
+                subtype: "RAW0000000000000",
+                data: &[0; SPARSE_HEADER_SIZE],
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        assert!(probe_sparse(&mut packer, "RFSFAT16", "SPARSE0000000000"));
+        assert!(!probe_sparse(&mut packer, "RFSFAT16", "RAW0000000000000"));
+        assert!(!probe_sparse(&mut packer, "RFSFAT16", "MISSING000000000"));
+    }
+
+    #[tokio::test]
+    async fn execute_accepts_valid_firmware_and_rejects_missing_file() {
+        let firmware = test_firmware(&[]);
+        execute(firmware.path().to_path_buf()).await.unwrap();
+
+        let dir = temp_dir("inspect-missing");
+        assert!(execute(dir.path().join("missing.fex")).await.is_err());
+    }
+}

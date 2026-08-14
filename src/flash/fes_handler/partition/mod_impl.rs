@@ -8,6 +8,7 @@ use super::raw_download::RawDownloader;
 use super::sparse_parser::SparseDownloader;
 use crate::firmware::sparse::SPARSE_HEADER_SIZE;
 use crate::firmware::OpenixPacker;
+use crate::flash::protocol::FesOps;
 use crate::utils::{FlashError, FlashResult, Logger};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -35,9 +36,9 @@ impl<'a> PartitionDownload<'a> {
     /// Execute partition download
     ///
     /// Downloads all partitions in the download list
-    pub async fn execute(
+    pub async fn execute<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         download_list: &[PartitionDownloadInfo],
         verify: bool,
@@ -59,14 +60,20 @@ impl<'a> PartitionDownload<'a> {
         self.written_bytes.store(0, Ordering::SeqCst);
         self.last_speed_update.store(0, Ordering::SeqCst);
 
+        let mut download_result = Ok(());
         for info in download_list {
             self.logger.info(&format!(
                 "Flashing partition: {} ({} bytes at sector {})",
                 info.partition_name, info.data_length, info.partition_address
             ));
 
-            self.download_single_partition(ctx, packer, info, verify)
-                .await?;
+            if let Err(error) = self
+                .download_single_partition(ctx, packer, info, verify)
+                .await
+            {
+                download_result = Err(error);
+                break;
+            }
         }
 
         self.logger.info("Turning off flash access...");
@@ -74,6 +81,8 @@ impl<'a> PartitionDownload<'a> {
             self.logger
                 .warn(&format!("Failed to turn off flash access: {}", e));
         }
+
+        download_result?;
 
         let written = self.written_bytes.load(Ordering::SeqCst);
         self.logger.stage_complete(&format!(
@@ -86,9 +95,9 @@ impl<'a> PartitionDownload<'a> {
     /// Download a single partition
     ///
     /// Detects whether the partition is in sparse or raw format
-    async fn download_single_partition(
+    async fn download_single_partition<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         info: &PartitionDownloadInfo,
         verify: bool,
@@ -135,9 +144,9 @@ impl<'a> PartitionDownload<'a> {
     }
 
     /// Download partition in sparse format
-    async fn download_sparse_partition(
+    async fn download_sparse_partition<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         info: &PartitionDownloadInfo,
         verify: bool,
@@ -151,9 +160,9 @@ impl<'a> PartitionDownload<'a> {
     }
 
     /// Download partition in raw format
-    async fn download_raw_partition(
+    async fn download_raw_partition<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         info: &PartitionDownloadInfo,
         verify: bool,
@@ -164,5 +173,109 @@ impl<'a> PartitionDownload<'a> {
             Arc::clone(&self.last_speed_update),
         );
         downloader.execute(ctx, packer, info, verify).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flash::protocol::tests::MockProtocol;
+    use crate::test_support::{test_firmware, FirmwareEntry};
+
+    fn info(length: u64) -> PartitionDownloadInfo {
+        PartitionDownloadInfo {
+            partition_name: "system".to_string(),
+            partition_address: 0x20,
+            download_filename: "system.img".to_string(),
+            download_subtype: "SYSTEM0000000000".to_string(),
+            data_offset: 0,
+            data_length: length,
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_list_does_not_open_flash_access() {
+        let firmware = test_firmware(&[]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        PartitionDownload::new(&mut logger)
+            .execute(&ctx, &mut packer, &[], false)
+            .await
+            .unwrap();
+        assert!(ctx.flash_switches.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn successful_raw_download_opens_and_closes_flash_access() {
+        let firmware = test_firmware(&[FirmwareEntry {
+            filename: "system.img",
+            maintype: ITEM_ROOTFSFAT16,
+            subtype: "SYSTEM0000000000",
+            data: b"raw",
+        }]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        PartitionDownload::new(&mut logger)
+            .execute(&ctx, &mut packer, &[info(3)], false)
+            .await
+            .unwrap();
+        assert_eq!(&*ctx.flash_switches.borrow(), &[(0, true), (0, false)]);
+        assert_eq!(ctx.downloads.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failures_still_close_flash_access_and_open_failure_is_propagated() {
+        let firmware = test_firmware(&[]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+
+        let open_failed = MockProtocol::default();
+        *open_failed.fail_flash_switch.borrow_mut() = Some("open".to_string());
+        assert!(matches!(
+            PartitionDownload::new(&mut logger)
+                .execute(&open_failed, &mut packer, &[info(1)], false)
+                .await,
+            Err(FlashError::UsbTransferError(_))
+        ));
+        assert_eq!(&*open_failed.flash_switches.borrow(), &[(0, true)]);
+
+        let download_failed = MockProtocol::default();
+        assert!(matches!(
+            PartitionDownload::new(&mut logger)
+                .execute(&download_failed, &mut packer, &[info(1)], false)
+                .await,
+            Err(FlashError::PartitionDownloadFailed(_))
+        ));
+        assert_eq!(
+            &*download_failed.flash_switches.borrow(),
+            &[(0, true), (0, false)]
+        );
+    }
+
+    #[tokio::test]
+    async fn close_failure_is_non_fatal_after_successful_download() {
+        let firmware = test_firmware(&[FirmwareEntry {
+            filename: "system.img",
+            maintype: ITEM_ROOTFSFAT16,
+            subtype: "SYSTEM0000000000",
+            data: b"raw",
+        }]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        ctx.flash_switch_results
+            .borrow_mut()
+            .extend([Ok(()), Err("close".to_string())]);
+        PartitionDownload::new(&mut logger)
+            .execute(&ctx, &mut packer, &[info(3)], false)
+            .await
+            .unwrap();
+        assert_eq!(&*ctx.flash_switches.borrow(), &[(0, true), (0, false)]);
     }
 }

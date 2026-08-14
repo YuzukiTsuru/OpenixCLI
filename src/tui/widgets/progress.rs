@@ -69,10 +69,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ProgressState, focused: boo
         .split(inner);
 
         // Error gauge
+        let overall_percent = state.overall_percent.clamp(0.0, 100.0);
         let gauge = Gauge::default()
             .gauge_style(Style::default().fg(Color::Red).bg(Color::DarkGray))
-            .percent(state.overall_percent.min(100.0) as u16)
-            .label(format!("{}% ERR", state.overall_percent as u16));
+            .percent(overall_percent as u16)
+            .label(format!("{}% ERR", overall_percent as u16));
         frame.render_widget(gauge, chunks[0]);
 
         let err_line = Line::from(vec![
@@ -136,10 +137,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &ProgressState, focused: boo
     } else {
         Color::White
     };
+    let overall_percent = state.overall_percent.clamp(0.0, 100.0);
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(gauge_color).bg(Color::DarkGray))
-        .percent(state.overall_percent.min(100.0) as u16)
-        .label(format!("{}%", state.overall_percent as u16));
+        .percent(overall_percent as u16)
+        .label(format!("{}%", overall_percent as u16));
     frame.render_widget(gauge, chunks[1]);
 
     // Partition progress
@@ -235,5 +237,150 @@ fn center_vertical(area: Rect, height: u16) -> Rect {
         y: area.y + offset,
         width: area.width,
         height: height.min(area.height),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn render_progress(state: &ProgressState, width: u16, height: u16, focused: bool) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), state, focused))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn formatting_helpers_cover_all_stages_and_unit_boundaries() {
+        let stages = [
+            (StageType::Init, "Init"),
+            (StageType::FelDram, "DRAM"),
+            (StageType::FelUboot, "UBoot"),
+            (StageType::FelReconnect, "Reconnect"),
+            (StageType::FesQuery, "Query"),
+            (StageType::FesErase, "Erase"),
+            (StageType::FesMbr, "MBR"),
+            (StageType::FesPartitions, "Partitions"),
+            (StageType::FesBoot, "Boot"),
+            (StageType::FesMode, "Mode"),
+        ];
+        for (stage, expected) in stages {
+            assert_eq!(stage_short_name(&stage), expected);
+        }
+        assert_eq!(format_speed(0.0), "");
+        assert_eq!(format_speed(512.0), "512 B/s");
+        assert_eq!(format_speed(2048.0), "2.0 KB/s");
+        assert_eq!(format_speed(2.0 * 1024.0 * 1024.0), "2.0 MB/s");
+        assert_eq!(format_duration(125), "02:05 elapsed");
+        assert_eq!(
+            center_vertical(Rect::new(1, 2, 3, 4), 2),
+            Rect::new(1, 3, 3, 2)
+        );
+        assert_eq!(
+            center_vertical(Rect::new(1, 2, 3, 1), 9),
+            Rect::new(1, 2, 3, 1)
+        );
+    }
+
+    #[test]
+    fn reset_restores_every_progress_field() {
+        let mut state = ProgressState {
+            overall_percent: 50.0,
+            stage_progress: 1,
+            stage_total: 2,
+            speed: 3.0,
+            current_partition: "rootfs".into(),
+            current_stage: Some(StageType::FesPartitions),
+            completed_stages: vec![StageType::Init],
+            all_stages: vec![StageType::Init],
+            stage_index: 1,
+            elapsed_secs: 4,
+            finished: true,
+            error: Some("error".into()),
+        };
+        state.reset();
+        assert_eq!(state.overall_percent, 0.0);
+        assert!(state.all_stages.is_empty());
+        assert!(state.error.is_none());
+        assert!(!state.finished);
+    }
+
+    #[test]
+    fn rendering_covers_waiting_ready_error_active_and_finished_states() {
+        let waiting = ProgressState::default();
+        assert!(render_progress(&waiting, 60, 10, false).contains("Waiting for task"));
+
+        let ready = ProgressState {
+            overall_percent: 1.0,
+            ..ProgressState::default()
+        };
+        assert!(render_progress(&ready, 60, 10, true).contains("Ready to flash"));
+
+        let error = ProgressState {
+            overall_percent: 150.0,
+            error: Some("transport failed".into()),
+            ..ProgressState::default()
+        };
+        let error_text = render_progress(&error, 60, 10, false);
+        assert!(error_text.contains("100% ERR"));
+        assert!(error_text.contains("transport failed"));
+
+        let active = ProgressState {
+            overall_percent: 45.0,
+            stage_progress: 3 * 1024 * 1024,
+            stage_total: 2 * 1024 * 1024,
+            speed: 2.0 * 1024.0 * 1024.0,
+            current_partition: "system".into(),
+            current_stage: Some(StageType::FesPartitions),
+            completed_stages: vec![StageType::Init],
+            all_stages: vec![
+                StageType::Init,
+                StageType::FesPartitions,
+                StageType::FesBoot,
+            ],
+            stage_index: 1,
+            elapsed_secs: 65,
+            ..ProgressState::default()
+        };
+        let active_text = render_progress(&active, 80, 12, false);
+        assert!(active_text.contains("Flashing Partitions"));
+        assert!(active_text.contains("Partition: system"));
+        assert!(active_text.contains("[Partitions]"));
+
+        let initializing = ProgressState {
+            all_stages: vec![StageType::Init, StageType::FesQuery],
+            ..ProgressState::default()
+        };
+        let initializing_text = render_progress(&initializing, 60, 10, false);
+        assert!(initializing_text.contains("Initializing"));
+        assert!(initializing_text.contains("Init"));
+        assert!(initializing_text.contains("Query"));
+
+        let finished = ProgressState {
+            overall_percent: 100.0,
+            finished: true,
+            all_stages: vec![StageType::Init],
+            elapsed_secs: 5,
+            ..ProgressState::default()
+        };
+        assert!(render_progress(&finished, 60, 10, false).contains("COMPLETE"));
+
+        let finished_without_pipeline = ProgressState {
+            overall_percent: 100.0,
+            finished: true,
+            ..ProgressState::default()
+        };
+        assert!(render_progress(&finished_without_pipeline, 60, 10, false).contains("COMPLETE"));
     }
 }

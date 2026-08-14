@@ -233,5 +233,65 @@ mod tests {
         );
         assert_eq!(DeviceSelector::new(Some(1), None).selected_pair(), None);
         assert_eq!(DeviceSelector::new(None, Some(5)).selected_pair(), None);
+        assert_eq!(DeviceSelector::default().selected_pair(), None);
+    }
+
+    #[test]
+    fn flash_mode_properties_and_navigation_cover_full_cycle() {
+        let cases = [
+            (FlashMode::Partition, 0, "Partition"),
+            (FlashMode::KeepData, 0, "Keep Data"),
+            (FlashMode::PartitionErase, 1, "Part. Erase"),
+            (FlashMode::FullErase, 0x12, "Full Erase"),
+        ];
+        for (mode, flag, name) in cases {
+            assert_eq!(mode.erase_flag(), flag);
+            assert_eq!(mode.display_name(), name);
+            assert_eq!(mode.next().prev(), mode);
+            assert_eq!(mode.prev().next(), mode);
+        }
+        assert!("FULL_ERASE".parse::<FlashMode>().is_err());
+        assert_eq!(FlashMode::FullErase.next(), FlashMode::PartitionErase);
+        assert_eq!(FlashMode::Partition.prev(), FlashMode::KeepData);
+    }
+
+    #[test]
+    fn post_action_properties_navigation_and_protocol_mapping_cover_cycle() {
+        let cases = [
+            (PostAction::Reboot, "Reboot", libefex::FesToolMode::Reboot),
+            (
+                PostAction::PowerOff,
+                "Power Off",
+                libefex::FesToolMode::PowerOff,
+            ),
+            (
+                PostAction::Shutdown,
+                "Shutdown",
+                libefex::FesToolMode::PowerOff,
+            ),
+        ];
+        for (action, name, tool_mode) in cases {
+            assert_eq!(action.name(), name);
+            assert_eq!(action.fes_tool_mode(), tool_mode);
+            assert_eq!(action.next().prev(), action);
+            assert_eq!(action.prev().next(), action);
+        }
+        assert!("restart".parse::<PostAction>().is_err());
+    }
+
+    #[test]
+    fn flash_request_constructor_preserves_all_options() {
+        let request = FlashRequest::new(
+            DeviceSelector::new(Some(2), Some(3)),
+            false,
+            FlashMode::KeepData,
+            Some(vec!["boot".to_string()]),
+            PostAction::Shutdown,
+        );
+        assert_eq!(request.device.selected_pair(), Some((2, 3)));
+        assert!(!request.verify);
+        assert_eq!(request.mode, FlashMode::KeepData);
+        assert_eq!(request.partitions, Some(vec!["boot".to_string()]));
+        assert_eq!(request.post_action, PostAction::Shutdown);
     }
 }

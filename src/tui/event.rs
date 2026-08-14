@@ -95,3 +95,45 @@ pub async fn event_loop(tx: mpsc::UnboundedSender<AppEvent>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_data_types_preserve_device_and_log_fields() {
+        for level in [
+            LogLevel::Info,
+            LogLevel::Success,
+            LogLevel::Warn,
+            LogLevel::Error,
+            LogLevel::Debug,
+        ] {
+            assert_eq!(level.clone(), level);
+        }
+
+        let device = DeviceInfo {
+            bus: 1,
+            port: 2,
+            mode: "FEL".into(),
+            chip: "D1".into(),
+            chip_id: 0x1840,
+            is_fel: true,
+        };
+        assert_eq!(device.bus, 1);
+        assert_eq!(device.port, 2);
+        assert_eq!(device.mode, "FEL");
+        assert_eq!(device.chip, "D1");
+        assert_eq!(device.chip_id, 0x1840);
+        assert!(device.is_fel);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn event_loop_exits_when_receiver_is_closed() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(1), event_loop(tx))
+            .await
+            .expect("closed event loop should exit");
+    }
+}

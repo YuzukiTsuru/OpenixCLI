@@ -75,6 +75,12 @@ mod tests {
                 "vendor".to_string()
             ])
         );
+        assert_eq!(parse_partition_list(None), None);
+        assert_eq!(parse_partition_list(Some(String::new())), Some(Vec::new()));
+        assert_eq!(
+            parse_partition_list(Some(", ,".to_string())),
+            Some(Vec::new())
+        );
     }
 
     #[test]

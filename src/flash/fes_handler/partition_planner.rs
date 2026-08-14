@@ -140,6 +140,9 @@ fn download_filename_for<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::mbr_parser::SunxiMbr;
+    use crate::flash::{DeviceSelector, PostAction};
+    use crate::test_support::{mbr_bytes, test_firmware, FirmwareEntry};
 
     fn names(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -176,5 +179,139 @@ mod tests {
     #[test]
     fn partition_mode_without_selection_keeps_existing_all_partition_behavior() {
         assert!(should_include_partition(FlashMode::Partition, None, "boot"));
+        assert!(should_include_partition(
+            FlashMode::PartitionErase,
+            Some(&names(&[])),
+            "boot"
+        ));
+        assert!(should_include_partition(
+            FlashMode::FullErase,
+            Some(&names(&[])),
+            "boot"
+        ));
+
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let planner = PartitionPlanner::new(&logger);
+        planner.log_skip_reason(FlashMode::KeepData, "udisk");
+        planner.log_skip_reason(FlashMode::Partition, "vendor");
+        planner.log_skip_reason(FlashMode::FullErase, "boot");
+    }
+
+    fn request(mode: FlashMode, partitions: Option<Vec<String>>) -> FlashRequest {
+        FlashRequest::new(
+            DeviceSelector::default(),
+            true,
+            mode,
+            partitions,
+            PostAction::Reboot,
+        )
+    }
+
+    #[test]
+    fn prepare_joins_mbr_config_and_primary_partition_image() {
+        let config = b"[partition_start]\n[partition]\nname=system\ndownloadfile=system.img\n";
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "sys_partition.fex",
+                maintype: "COMMON",
+                subtype: "SYS_CONFIG000000",
+                data: config,
+            },
+            FirmwareEntry {
+                filename: "system.img",
+                maintype: ITEM_ROOTFSFAT16,
+                subtype: "SYSTEM_IMG000000",
+                data: b"payload",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mbr = SunxiMbr::parse(&mbr_bytes(&[("system", 0x1234, 0x1000, false)]))
+            .unwrap()
+            .to_mbr_info();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let list = PartitionPlanner::new(&logger)
+            .prepare(&mut packer, &mbr, &request(FlashMode::FullErase, None))
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].partition_name, "system");
+        assert_eq!(list[0].partition_address, 0x1234);
+        assert_eq!(list[0].download_filename, "system.img");
+        assert_eq!(list[0].download_subtype, "SYSTEM_IMG000000");
+        assert_eq!(list[0].data_length, 7);
+    }
+
+    #[test]
+    fn prepare_uses_fallback_maintype_then_filename_lookup() {
+        let config = b"[partition_start]\n[partition]\nname=boot\ndownloadfile=boot.fex\n[partition]\nname=vendor\ndownloadfile=vendor.img\n";
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "sys_partition.fex",
+                maintype: "COMMON",
+                subtype: "SYS_CONFIG000000",
+                data: config,
+            },
+            FirmwareEntry {
+                filename: "boot.fex",
+                maintype: "12345678",
+                subtype: "BOOT_FEX00000000",
+                data: b"boot",
+            },
+            FirmwareEntry {
+                filename: "vendor.img",
+                maintype: "OTHER",
+                subtype: "UNRELATED0000000",
+                data: b"vendor",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mbr_data = mbr_bytes(&[("boot", 1, 1, false), ("vendor", 2, 1, false)]);
+        let mbr = SunxiMbr::parse(&mbr_data).unwrap().to_mbr_info();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let list = PartitionPlanner::new(&logger)
+            .prepare(&mut packer, &mbr, &request(FlashMode::FullErase, None))
+            .unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].data_length, 4);
+        assert_eq!(list[1].data_length, 6);
+    }
+
+    #[test]
+    fn prepare_skips_unselected_missing_config_empty_filename_and_missing_images() {
+        let config = b"[partition_start]\n[partition]\nname=empty\ndownloadfile=\n[partition]\nname=missing\ndownloadfile=missing.img\n[partition]\nname=boot\ndownloadfile=boot.img\n";
+        let firmware = test_firmware(&[FirmwareEntry {
+            filename: "sys_partition.fex",
+            maintype: "COMMON",
+            subtype: "SYS_CONFIG000000",
+            data: config,
+        }]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mbr_data = mbr_bytes(&[
+            ("no-config", 0, 0, false),
+            ("empty", 0, 0, false),
+            ("missing", 0, 0, false),
+            ("boot", 0, 0, false),
+        ]);
+        let mbr = SunxiMbr::parse(&mbr_data).unwrap().to_mbr_info();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let selected = request(FlashMode::Partition, Some(names(&["empty", "missing"])));
+        let list = PartitionPlanner::new(&logger)
+            .prepare(&mut packer, &mbr, &selected)
+            .unwrap();
+        assert!(list.is_empty());
+
+        let no_config = test_firmware(&[]);
+        let mut no_config_packer = OpenixPacker::new();
+        no_config_packer.load(no_config.path()).unwrap();
+        assert!(PartitionPlanner::new(&logger)
+            .prepare(
+                &mut no_config_packer,
+                &mbr,
+                &request(FlashMode::KeepData, None)
+            )
+            .unwrap()
+            .is_empty());
     }
 }

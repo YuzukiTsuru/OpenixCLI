@@ -193,6 +193,22 @@ impl FirmwareState {
     }
 }
 
+fn abbreviated_path(path: &str) -> String {
+    if path.chars().count() <= 35 {
+        return path.to_string();
+    }
+
+    let tail: String = path
+        .chars()
+        .rev()
+        .take(32)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("...{tail}")
+}
+
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -221,13 +237,7 @@ pub fn render(
 
     // Firmware path + browse hint on same line
     let path_display = match &state.path {
-        Some(p) => {
-            if p.len() > 35 {
-                format!("...{}", &p[p.len() - 32..])
-            } else {
-                p.clone()
-            }
-        }
+        Some(p) => abbreviated_path(p),
         None => "(none)".into(),
     };
     if locked {
@@ -473,7 +483,7 @@ pub fn render(
         let scroll_offset = state.parts_scroll_offset;
 
         let has_more_above = scroll_offset > 0;
-        let has_more_below = scroll_offset + max_visible < total_parts;
+        let has_more_below = scroll_offset.saturating_add(max_visible) < total_parts;
 
         // Show scroll indicator at top if needed
         if has_more_above {
@@ -484,7 +494,7 @@ pub fn render(
         }
 
         // Show visible partition slice
-        let visible_end = (scroll_offset + max_visible).min(total_parts);
+        let visible_end = scroll_offset.saturating_add(max_visible).min(total_parts);
         for i in scroll_offset..visible_end {
             let name = &state.all_partitions[i];
             let selected = state.selected_partitions.get(i).copied().unwrap_or(true);
@@ -544,4 +554,180 @@ pub fn render(
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn render_state(
+        state: &mut FirmwareState,
+        width: u16,
+        height: u16,
+        locked: bool,
+        focused: bool,
+    ) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), state, locked, focused))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn field_navigation_covers_lists_with_and_without_partitions() {
+        assert_eq!(FirmwareField::Mode.next(false), FirmwareField::Verify);
+        assert_eq!(FirmwareField::Verify.next(false), FirmwareField::PostAction);
+        assert_eq!(FirmwareField::PostAction.next(false), FirmwareField::Mode);
+        assert_eq!(FirmwareField::PostAction.next(true), FirmwareField::Parts);
+        assert_eq!(FirmwareField::Parts.next(true), FirmwareField::Mode);
+
+        assert_eq!(FirmwareField::Mode.prev(false), FirmwareField::PostAction);
+        assert_eq!(FirmwareField::Mode.prev(true), FirmwareField::Parts);
+        assert_eq!(FirmwareField::Verify.prev(false), FirmwareField::Mode);
+        assert_eq!(FirmwareField::PostAction.prev(false), FirmwareField::Verify);
+        assert_eq!(FirmwareField::Parts.prev(true), FirmwareField::PostAction);
+    }
+
+    #[test]
+    fn modes_options_and_partition_filters_cover_each_state() {
+        let mut state = FirmwareState::default();
+        assert_eq!(state.mode_display(), "Full Erase");
+        assert!(!state.has_parts_field());
+        assert_eq!(state.selected_partition_names(), None);
+
+        state.next_mode();
+        state.prev_mode();
+        assert_eq!(state.mode, FlashMode::FullErase);
+
+        state.focused_field = FirmwareField::Verify;
+        state.cycle_left();
+        assert!(!state.verify);
+        state.cycle_right();
+        assert!(state.verify);
+
+        state.focused_field = FirmwareField::PostAction;
+        let original_action = state.post_action;
+        state.cycle_left();
+        state.cycle_right();
+        assert_eq!(state.post_action, original_action);
+
+        state.focused_field = FirmwareField::Parts;
+        let original_mode = state.mode;
+        state.cycle_left();
+        state.cycle_right();
+        assert_eq!(state.mode, original_mode);
+
+        state.mode = FlashMode::Partition;
+        state.all_partitions = vec!["boot".into(), "system".into(), "vendor".into()];
+        state.selected_partitions = vec![true, false, true];
+        assert!(state.has_parts_field());
+        assert_eq!(
+            state.selected_partition_names(),
+            Some(vec!["boot".to_string(), "vendor".to_string()])
+        );
+        state.selected_partitions.fill(true);
+        assert_eq!(state.selected_partition_names(), None);
+        state.selected_partitions.fill(false);
+        assert_eq!(state.selected_partition_names(), None);
+        state.mode = FlashMode::FullErase;
+        assert_eq!(state.selected_partition_names(), None);
+    }
+
+    #[test]
+    fn partition_cursor_scrolling_and_toggles_handle_boundaries() {
+        let mut state = FirmwareState {
+            mode: FlashMode::Partition,
+            all_partitions: (0..5).map(|index| format!("part{index}")).collect(),
+            selected_partitions: vec![true; 5],
+            parts_max_visible: 2,
+            focused_field: FirmwareField::Parts,
+            ..FirmwareState::default()
+        };
+
+        state.move_parts_cursor_up();
+        assert_eq!(state.focused_field, FirmwareField::PostAction);
+        state.focused_field = FirmwareField::Parts;
+        for _ in 0..4 {
+            state.move_parts_cursor_down();
+        }
+        assert_eq!(state.parts_cursor, 4);
+        assert_eq!(state.parts_scroll_offset, 3);
+        state.move_parts_cursor_down();
+        assert_eq!(state.focused_field, FirmwareField::Mode);
+
+        state.focused_field = FirmwareField::Parts;
+        state.toggle_partition();
+        assert!(!state.selected_partitions[4]);
+        state.toggle_all_partitions();
+        assert!(state.selected_partitions.iter().all(|selected| *selected));
+        state.toggle_all_partitions();
+        assert!(state.selected_partitions.iter().all(|selected| !*selected));
+
+        for _ in 0..4 {
+            state.move_parts_cursor_up();
+        }
+        assert_eq!(state.parts_cursor, 0);
+        assert_eq!(state.parts_scroll_offset, 0);
+
+        state.parts_cursor = 99;
+        let before = state.selected_partitions.clone();
+        state.toggle_partition();
+        assert_eq!(state.selected_partitions, before);
+    }
+
+    #[test]
+    fn path_abbreviation_is_unicode_safe_and_exactly_bounded() {
+        assert_eq!(abbreviated_path("short.fex"), "short.fex");
+        let long = format!("{}firmware.fex", "固件/".repeat(20));
+        let abbreviated = abbreviated_path(&long);
+        assert!(abbreviated.starts_with("..."));
+        assert_eq!(abbreviated.chars().count(), 35);
+        assert!(long.ends_with(&abbreviated[3..]));
+    }
+
+    #[test]
+    fn rendering_covers_empty_loaded_locked_and_scrolled_partition_views() {
+        let mut empty = FirmwareState::default();
+        let empty_text = render_state(&mut empty, 70, 14, false, true);
+        assert!(empty_text.contains("(none)"));
+
+        let mut loaded = FirmwareState {
+            path: Some(format!("{}image.fex", "固件/".repeat(20))),
+            size_mb: 128,
+            num_files: 9,
+            mode: FlashMode::Partition,
+            all_partitions: (0..8).map(|index| format!("part{index}")).collect(),
+            selected_partitions: vec![true, false, true, false, true, false, true, false],
+            parts_cursor: 4,
+            parts_scroll_offset: 2,
+            focused_field: FirmwareField::Parts,
+            ..FirmwareState::default()
+        };
+        let text = render_state(&mut loaded, 70, 16, false, true);
+        assert!(text.contains("128 MB"));
+        assert!(text.contains("[x]"));
+        assert!(text.contains("[ ]"));
+
+        let locked = render_state(&mut loaded, 70, 16, true, false);
+        assert!(locked.contains("(locked)"));
+
+        loaded.mode = FlashMode::FullErase;
+        let readonly = render_state(&mut loaded, 70, 16, false, false);
+        assert!(readonly.contains("part"));
+
+        loaded.all_partitions.clear();
+        loaded.selected_partitions.clear();
+        let no_parts = render_state(&mut loaded, 70, 12, false, false);
+        assert!(no_parts.contains("N/A"));
+    }
 }
