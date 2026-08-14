@@ -200,3 +200,141 @@ impl Default for Logger {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::process::global_progress::set_tui_mode;
+    use crate::utils::terminal::{set_tui_log_sender, set_verbose, TuiLogLevel};
+    use std::sync::Mutex;
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn constructors_and_terminal_output_paths_cover_verbose_modes() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        let default_logger = Logger::default();
+        assert!(!default_logger.verbose);
+        assert!(default_logger.terminal_output);
+        let quiet_logger = Logger::with_verbose(false);
+        assert!(!quiet_logger.verbose);
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        set_tui_log_sender(Some(tx));
+        set_verbose(true);
+        default_logger.info("info");
+        default_logger.success("success");
+        default_logger.warn("warn");
+        default_logger.error("error");
+        default_logger.debug("hidden");
+        default_logger.stage_complete("stage");
+        Logger::with_verbose(true).debug("debug");
+
+        let mut levels = Vec::new();
+        while let Ok(message) = rx.try_recv() {
+            levels.push(message.level);
+        }
+        assert_eq!(
+            levels,
+            vec![
+                TuiLogLevel::Info,
+                TuiLogLevel::Success,
+                TuiLogLevel::Warn,
+                TuiLogLevel::Error,
+                TuiLogLevel::Success,
+                TuiLogLevel::Debug,
+            ]
+        );
+        set_tui_log_sender(None);
+        set_verbose(false);
+    }
+
+    #[test]
+    fn event_logger_emits_every_pipeline_event_and_progress_snapshot() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        set_tui_mode(true);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let logger = Logger::for_events(
+            true,
+            FlashEventSink::from_fn(move |event| captured.lock().unwrap().push(event)),
+        );
+
+        logger.finish_progress();
+        logger.define_stages(&[StageType::Init, StageType::FesPartitions]);
+        logger.start_global_progress();
+        logger.begin_stage(StageType::Init);
+        logger.info("info");
+        logger.success("success");
+        logger.warn("warn");
+        logger.error("error");
+        logger.debug("debug");
+        logger.stage_complete("stage");
+        logger.update_progress_percent(100);
+        logger.complete_stage();
+        logger.begin_stage(StageType::FesPartitions);
+        logger.set_partition_stage_weight(1_000);
+        logger.set_current_partition("rootfs");
+        logger.update_progress(250);
+        logger.update_progress_with_speed(500);
+        assert_eq!(logger.get_progress(), 3);
+        logger.complete_stage();
+        logger.flash_finished(PostAction::Shutdown);
+        logger.finish_progress();
+
+        let events = events.lock().unwrap();
+        for level in [
+            FlashLogLevel::Info,
+            FlashLogLevel::Success,
+            FlashLogLevel::Warn,
+            FlashLogLevel::Error,
+            FlashLogLevel::Debug,
+        ] {
+            assert!(events.iter().any(
+                |event| matches!(event, FlashEvent::Log { level: actual, .. } if *actual == level)
+            ));
+        }
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, FlashEvent::StagesDefined(stages) if stages.len() == 2)));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, FlashEvent::StageStarted(StageType::FesPartitions))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, FlashEvent::StageCompleted(StageType::Init))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, FlashEvent::PartitionStageWeight(1_000))));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, FlashEvent::PartitionStarted(name) if name == "rootfs")));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            FlashEvent::Progress {
+                stage_progress: 500,
+                total: 1_000,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            FlashEvent::Finished {
+                post_action: PostAction::Shutdown
+            }
+        )));
+
+        set_tui_mode(false);
+    }
+
+    #[test]
+    fn non_verbose_event_logger_suppresses_debug() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let logger = Logger::for_events(
+            false,
+            FlashEventSink::from_fn(move |event| captured.lock().unwrap().push(event)),
+        );
+        logger.debug("hidden");
+        assert!(events.lock().unwrap().is_empty());
+    }
+}

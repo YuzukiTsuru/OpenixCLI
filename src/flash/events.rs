@@ -63,3 +63,33 @@ impl FlashEventSink {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn sinks_can_ignore_emit_and_share_callbacks_across_clones() {
+        FlashEventSink::none().emit(FlashEvent::StageStarted(StageType::Init));
+        FlashEventSink::default().emit(FlashEvent::StageCompleted(StageType::Init));
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let sink = FlashEventSink::from_fn(move |event| captured.lock().unwrap().push(event));
+        let clone = sink.clone();
+        sink.emit(FlashEvent::PartitionStageWeight(123));
+        clone.emit(FlashEvent::Finished {
+            post_action: PostAction::Reboot,
+        });
+
+        let events = events.lock().unwrap();
+        assert!(matches!(events[0], FlashEvent::PartitionStageWeight(123)));
+        assert!(matches!(
+            events[1],
+            FlashEvent::Finished {
+                post_action: PostAction::Reboot
+            }
+        ));
+    }
+}

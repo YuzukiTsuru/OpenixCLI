@@ -92,3 +92,20 @@ static IMAGE_ENTRY_MAP: Lazy<HashMap<&'static str, &'static ImageDataEntry>> = L
 pub fn get_image_data_entry(name: &str) -> Option<&'static ImageDataEntry> {
     IMAGE_ENTRY_MAP.get(name).copied()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_declared_image_entry_is_lookupable() {
+        for expected in IMAGE_DATA_TABLE {
+            let actual = get_image_data_entry(expected.name).unwrap();
+            assert_eq!(actual.name, expected.name);
+            assert_eq!(actual.maintype, expected.maintype);
+            assert_eq!(actual.subtype, expected.subtype);
+        }
+        assert!(get_image_data_entry("unknown").is_none());
+        assert!(get_image_data_entry("").is_none());
+    }
+}

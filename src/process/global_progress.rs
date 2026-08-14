@@ -167,7 +167,7 @@ impl GlobalProgress {
 
         let mut cumulative_percent = 0u64;
         for stage_type in stage_types {
-            let end_percent = match stage_type {
+            let end_percent: u64 = match stage_type {
                 StageType::Init => 3,
                 StageType::FelDram => 5,
                 StageType::FelUboot => 8,
@@ -181,7 +181,7 @@ impl GlobalProgress {
             };
             stages.push(StageInfo {
                 stage_type: *stage_type,
-                weight: end_percent - cumulative_percent,
+                weight: end_percent.saturating_sub(cumulative_percent),
                 completed: false,
                 sub_total: 0,
             });
@@ -191,6 +191,12 @@ impl GlobalProgress {
         self.total_weight.store(100, Ordering::SeqCst);
         self.completed_weight.store(0, Ordering::SeqCst);
         self.current_stage.store(0, Ordering::SeqCst);
+        self.stage_progress.store(0, Ordering::SeqCst);
+        self.total_bytes.store(0, Ordering::SeqCst);
+        self.global_written_bytes.store(0, Ordering::SeqCst);
+        self.last_update_bytes.store(0, Ordering::SeqCst);
+        *self.current_speed.lock().unwrap() = 0.0;
+        *self.precise_progress.lock().unwrap() = 0.0;
     }
 
     /// Set the weight for partition flashing stage based on total bytes
@@ -354,7 +360,7 @@ impl GlobalProgress {
         let current = self.current_stage.load(Ordering::SeqCst);
         let mut stages = self.stages.lock().unwrap();
 
-        if current < stages.len() {
+        if current < stages.len() && !stages[current].completed {
             stages[current].completed = true;
             let weight = stages[current].weight;
 
@@ -393,6 +399,8 @@ impl GlobalProgress {
         self.global_written_bytes.store(0, Ordering::SeqCst);
         self.last_update_bytes.store(0, Ordering::SeqCst);
         *self.current_speed.lock().unwrap() = 0.0;
+        *self.precise_progress.lock().unwrap() = 0.0;
+        *self.last_update_time.lock().unwrap() = None;
         *self.current_partition.lock().unwrap() = String::new();
 
         let mut stages = self.stages.lock().unwrap();
@@ -410,5 +418,166 @@ impl GlobalProgress {
 impl Default for GlobalProgress {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_names_cover_every_variant() {
+        let cases = [
+            (StageType::Init, "Initializing"),
+            (StageType::FelDram, "DRAM Init"),
+            (StageType::FelUboot, "U-Boot Download"),
+            (StageType::FelReconnect, "Reconnecting"),
+            (StageType::FesQuery, "Query Device"),
+            (StageType::FesErase, "Erasing"),
+            (StageType::FesMbr, "Writing MBR"),
+            (StageType::FesPartitions, "Flashing Partitions"),
+            (StageType::FesBoot, "Writing Boot"),
+            (StageType::FesMode, "Setting Mode"),
+        ];
+
+        for (stage, expected) in cases {
+            assert_eq!(stage.name(), expected);
+        }
+    }
+
+    #[test]
+    fn definitions_reset_state_and_tolerate_nonstandard_order() {
+        let progress = GlobalProgress::default();
+        progress.define_stages(&[StageType::FesPartitions, StageType::Init]);
+
+        let snapshot = progress.snapshot();
+        assert_eq!(snapshot.stages.len(), 2);
+        assert_eq!(snapshot.stages[0].weight, 100);
+        assert_eq!(snapshot.stages[1].weight, 0);
+        assert_eq!(snapshot.precise_progress, 0.0);
+        assert_eq!(snapshot.stage_progress, 0);
+        assert_eq!(snapshot.total_bytes, 0);
+        assert_eq!(snapshot.speed, 0.0);
+        assert_eq!(snapshot.current_stage_index, 0);
+    }
+
+    #[test]
+    fn partition_progress_is_weighted_clamped_and_completed_once() {
+        let progress = GlobalProgress::new();
+        progress.define_stages(&[StageType::Init, StageType::FesMbr, StageType::FesPartitions]);
+
+        progress.start_stage(StageType::Init);
+        progress.complete_stage();
+        assert_eq!(progress.get_progress(), 3);
+
+        progress.start_stage(StageType::FesMbr);
+        progress.complete_stage();
+        assert_eq!(progress.get_progress(), 20);
+
+        progress.start_stage(StageType::FesPartitions);
+        progress.set_partition_stage_weight(1_000);
+        progress.set_current_partition("rootfs");
+        progress.update_stage_progress(250);
+        let snapshot = progress.snapshot();
+        assert_eq!(snapshot.precise_progress, 40.0);
+        assert_eq!(snapshot.stage_progress, 250);
+        assert_eq!(snapshot.total_bytes, 1_000);
+
+        progress.update_stage_progress(2_000);
+        assert_eq!(progress.snapshot().precise_progress, 100.0);
+        progress.complete_stage();
+        progress.complete_stage();
+        assert_eq!(progress.get_progress(), 100);
+    }
+
+    #[test]
+    fn irrelevant_stage_updates_are_noops() {
+        let progress = GlobalProgress::new();
+        progress.update_stage_progress(50);
+        progress.complete_stage();
+        progress.update_message("ignored");
+        progress.update_progress_message();
+        assert_eq!(progress.get_progress(), 0);
+
+        progress.define_stages(&[StageType::Init, StageType::FesPartitions]);
+        progress.set_partition_stage_weight(123);
+        assert_eq!(progress.snapshot().total_bytes, 0);
+        progress.start_stage(StageType::FesBoot);
+        assert_eq!(progress.snapshot().current_stage_index, 0);
+    }
+
+    #[test]
+    fn speed_and_messages_cover_byte_kibibyte_and_mebibyte_ranges() {
+        let progress = GlobalProgress::new();
+        progress.define_stages(&[StageType::FesPartitions]);
+        progress.set_partition_stage_weight(4 * 1024 * 1024);
+        progress.set_current_partition("system");
+        *progress.progress_bar.lock().unwrap() = Some(ProgressBar::hidden());
+
+        for speed in [512.0, 2048.0, 2.0 * 1024.0 * 1024.0] {
+            *progress.current_speed.lock().unwrap() = speed;
+            progress.update_progress_message();
+        }
+
+        *progress.last_update_time.lock().unwrap() =
+            Some(Instant::now() - Duration::from_millis(100));
+        progress.last_update_bytes.store(0, Ordering::SeqCst);
+        progress.update_stage_progress_with_speed(1024);
+        assert!(progress.snapshot().speed > 0.0);
+
+        progress.set_current_partition("");
+        progress.total_bytes.store(0, Ordering::SeqCst);
+        progress.update_progress_message();
+        progress.update_message("custom");
+        assert_eq!(
+            progress
+                .progress_bar
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .message(),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn start_and_finish_are_idempotent_and_clear_reusable_state() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        set_tui_mode(true);
+        let progress = GlobalProgress::new();
+        progress.define_stages(&[StageType::Init]);
+        progress.start();
+        progress.start();
+        progress.update_stage_progress_with_speed(1);
+        progress.complete_stage();
+        progress.finish();
+        progress.finish();
+
+        let snapshot = progress.snapshot();
+        assert!(snapshot.stages.is_empty());
+        assert_eq!(snapshot.precise_progress, 0.0);
+        assert_eq!(snapshot.stage_progress, 0);
+        assert_eq!(snapshot.total_bytes, 0);
+        assert_eq!(snapshot.speed, 0.0);
+        assert_eq!(progress.get_progress(), 0);
+
+        set_tui_mode(false);
+        let terminal_progress = GlobalProgress::new();
+        terminal_progress.start();
+        assert!(terminal_progress.progress_bar.lock().unwrap().is_some());
+        terminal_progress.finish();
+        assert!(terminal_progress.progress_bar.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn global_accessors_share_instances_and_tui_flag_round_trips() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        assert!(Arc::ptr_eq(&multi_progress(), &multi_progress()));
+        assert!(Arc::ptr_eq(&global_progress(), &global_progress()));
+        set_tui_mode(true);
+        assert!(is_tui_mode());
+        set_tui_mode(false);
+        assert!(!is_tui_mode());
     }
 }

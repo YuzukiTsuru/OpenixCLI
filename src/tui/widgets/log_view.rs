@@ -34,8 +34,9 @@ impl Default for LogState {
 impl LogState {
     pub fn push(&mut self, level: LogLevel, message: String) {
         self.entries.push(LogEntry { level, message });
-        if self.entries.len() > self.max_entries {
-            self.entries.remove(0);
+        let excess = self.entries.len().saturating_sub(self.max_entries);
+        if excess > 0 {
+            self.entries.drain(..excess);
         }
         // auto_scroll offset is recalculated each render frame
     }
@@ -99,4 +100,71 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut LogState, focused: bool
         .scroll((state.scroll_offset, 0));
 
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn render_log(state: &mut LogState, width: u16, height: u16, focused: bool) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), state, focused))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn push_enforces_capacity_including_zero_capacity() {
+        let mut state = LogState {
+            max_entries: 2,
+            ..LogState::default()
+        };
+        state.push(LogLevel::Info, "one".into());
+        state.push(LogLevel::Warn, "two".into());
+        state.push(LogLevel::Error, "three".into());
+        assert_eq!(state.entries.len(), 2);
+        assert_eq!(state.entries[0].message, "two");
+
+        state.max_entries = 0;
+        state.push(LogLevel::Debug, "discarded".into());
+        assert!(state.entries.is_empty());
+    }
+
+    #[test]
+    fn render_maps_all_levels_and_updates_wrapped_auto_scroll() {
+        let mut state = LogState::default();
+        for (level, text) in [
+            (LogLevel::Info, "info"),
+            (LogLevel::Success, "success"),
+            (LogLevel::Warn, "warn"),
+            (LogLevel::Error, "error"),
+            (LogLevel::Debug, "debug message that wraps across lines"),
+        ] {
+            state.push(level, text.into());
+        }
+
+        let text = render_log(&mut state, 24, 5, true);
+        assert!(state.scroll_offset > 0);
+        assert!(text.contains("[DEBG]"));
+
+        state.auto_scroll = false;
+        state.scroll_offset = 0;
+        let text = render_log(&mut state, 80, 10, false);
+        for tag in ["[INFO]", "[OKAY]", "[WARN]", "[ERRO]", "[DEBG]"] {
+            assert!(text.contains(tag));
+        }
+
+        state.auto_scroll = true;
+        let _ = render_log(&mut state, 1, 1, false);
+    }
 }

@@ -52,6 +52,8 @@ impl SparseHeader {
             && self.major_version == SPARSE_HEADER_MAJOR_VER
             && self.file_hdr_sz as usize == SPARSE_HEADER_SIZE
             && self.chunk_hdr_sz as usize == CHUNK_HEADER_SIZE
+            && self.blk_sz != 0
+            && self.blk_sz.is_multiple_of(SECTOR_SIZE as u32)
     }
 }
 
@@ -136,6 +138,14 @@ pub fn sparse_format_probe(data: &[u8]) -> crate::utils::FlashResult<SparseHeade
         )));
     }
 
+    let block_size = header.blk_sz;
+    if block_size == 0 || !block_size.is_multiple_of(SECTOR_SIZE as u32) {
+        return Err(FlashError::InvalidFirmwareFormat(format!(
+            "Invalid sparse block size: {}",
+            block_size
+        )));
+    }
+
     Ok(*header)
 }
 
@@ -148,20 +158,9 @@ pub fn add_sum(data: &[u8], initial: u32) -> u32 {
         sum = sum.wrapping_add(value);
     }
 
-    let remaining = data.len() & 0x03;
-    if remaining > 0 {
-        let last_value: u32 = match remaining {
-            1 => data[aligned_len] as u32,
-            2 => data[aligned_len] as u32 | (data[aligned_len + 1] as u32) << 8,
-            3 => {
-                data[aligned_len] as u32
-                    | (data[aligned_len + 1] as u32) << 8
-                    | (data[aligned_len + 2] as u32) << 16
-            }
-            _ => 0,
-        };
-        sum = sum.wrapping_add(last_value);
-    }
+    let mut tail = [0u8; 4];
+    tail[..data.len() - aligned_len].copy_from_slice(&data[aligned_len..]);
+    sum = sum.wrapping_add(u32::from_le_bytes(tail));
 
     sum
 }
@@ -180,4 +179,125 @@ pub enum ParseState {
     ChunkHead,
     ChunkData,
     ChunkFillData,
+    ChunkCrcData,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::write_struct;
+    use crate::utils::FlashError;
+
+    fn valid_header() -> SparseHeader {
+        SparseHeader {
+            magic: SPARSE_HEADER_MAGIC,
+            major_version: SPARSE_HEADER_MAJOR_VER,
+            minor_version: 0,
+            file_hdr_sz: SPARSE_HEADER_SIZE as u16,
+            chunk_hdr_sz: CHUNK_HEADER_SIZE as u16,
+            blk_sz: 4096,
+            total_blks: 2,
+            total_chunks: 1,
+            image_checksum: 0,
+        }
+    }
+
+    fn header_bytes(header: SparseHeader) -> Vec<u8> {
+        let mut bytes = vec![0; SPARSE_HEADER_SIZE];
+        write_struct(&mut bytes, &header);
+        bytes
+    }
+
+    fn error_message(error: FlashError) -> String {
+        match error {
+            FlashError::InvalidFirmwareFormat(message) => message,
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn sparse_header_parsing_and_mutation_cover_boundaries() {
+        assert!(SparseHeader::parse(&[]).is_none());
+        assert!(SparseHeader::parse_mut(&mut []).is_none());
+        assert!(!is_sparse_format(&[]));
+
+        let mut bytes = header_bytes(valid_header());
+        assert!(SparseHeader::parse(&bytes).unwrap().is_valid());
+        assert!(is_sparse_format(&bytes));
+        SparseHeader::parse_mut(&mut bytes).unwrap().magic = 0;
+        assert!(!SparseHeader::parse(&bytes).unwrap().is_valid());
+        assert!(!is_sparse_format(&bytes));
+    }
+
+    #[test]
+    fn sparse_probe_reports_each_invalid_header_field() {
+        assert!(error_message(sparse_format_probe(&[]).unwrap_err()).contains("insufficient"));
+
+        let mut header = valid_header();
+        header.magic = 0;
+        assert!(
+            error_message(sparse_format_probe(&header_bytes(header)).unwrap_err())
+                .contains("magic")
+        );
+        header = valid_header();
+        header.major_version = 2;
+        assert!(
+            error_message(sparse_format_probe(&header_bytes(header)).unwrap_err())
+                .contains("version")
+        );
+        header = valid_header();
+        header.file_hdr_sz = 0;
+        assert!(
+            error_message(sparse_format_probe(&header_bytes(header)).unwrap_err())
+                .contains("file header")
+        );
+        header = valid_header();
+        header.chunk_hdr_sz = 0;
+        assert!(
+            error_message(sparse_format_probe(&header_bytes(header)).unwrap_err())
+                .contains("chunk header")
+        );
+        header = valid_header();
+        header.blk_sz = 0;
+        assert!(
+            error_message(sparse_format_probe(&header_bytes(header)).unwrap_err())
+                .contains("block size")
+        );
+        header = valid_header();
+        header.blk_sz = 513;
+        assert!(!is_sparse_format(&header_bytes(header)));
+
+        let parsed = sparse_format_probe(&header_bytes(valid_header())).unwrap();
+        let block_size = parsed.blk_sz;
+        assert_eq!(block_size, 4096);
+    }
+
+    #[test]
+    fn chunk_header_parsing_mutation_and_saturating_size() {
+        assert!(ChunkHeader::parse(&[]).is_none());
+        assert!(ChunkHeader::parse_mut(&mut []).is_none());
+
+        let chunk = ChunkHeader {
+            chunk_type: CHUNK_TYPE_RAW,
+            reserved: 0,
+            chunk_sz: 1,
+            total_sz: CHUNK_HEADER_SIZE as u32 + 4,
+        };
+        let mut bytes = vec![0; CHUNK_HEADER_SIZE];
+        write_struct(&mut bytes, &chunk);
+        assert_eq!(ChunkHeader::parse(&bytes).unwrap().data_size(), 4);
+        ChunkHeader::parse_mut(&mut bytes).unwrap().total_sz = 1;
+        assert_eq!(ChunkHeader::parse(&bytes).unwrap().data_size(), 0);
+    }
+
+    #[test]
+    fn additive_checksum_handles_all_tail_lengths_and_wraps() {
+        assert_eq!(add_sum(&[], 7), 7);
+        assert_eq!(add_sum(&[1], 0), 1);
+        assert_eq!(add_sum(&[1, 2], 0), 0x0201);
+        assert_eq!(add_sum(&[1, 2, 3], 0), 0x030201);
+        assert_eq!(add_sum(&[1, 2, 3, 4], 0), 0x04030201);
+        assert_eq!(add_sum(&[1, 0, 0, 0], u32::MAX), 0);
+        assert_eq!(add_sum(&[1, 0, 0, 0, 2], 0), 3);
+    }
 }

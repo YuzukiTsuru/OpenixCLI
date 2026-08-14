@@ -22,6 +22,7 @@ pub use ubifs_config::UbifsConfig;
 use crate::config::boot_header::get_sunxi_boot_file_mode_string;
 use crate::config::mbr_parser::SunxiMbr;
 use crate::firmware::{OpenixPacker, StorageType};
+use crate::flash::protocol::FesOps;
 use crate::flash::{FlashMode, FlashRequest};
 use crate::process::StageType;
 use crate::utils::{FlashError, FlashResult, Logger};
@@ -48,9 +49,9 @@ impl<'a> FesHandler<'a> {
     /// 3. Download MBR
     /// 4. Download partitions
     /// 5. Download boot images
-    pub async fn handle(
+    pub async fn handle<C: FesOps>(
         &mut self,
-        ctx: &libefex::Context,
+        ctx: &C,
         packer: &mut OpenixPacker,
         request: &FlashRequest,
     ) -> FlashResult<()> {
@@ -129,15 +130,217 @@ impl<'a> FesHandler<'a> {
             }
 
             self.logger.complete_stage();
-
-            self.logger.begin_stage(StageType::FesBoot);
-            let boot_download = BootDownload::new(&*self.logger);
-            boot_download
-                .execute(ctx, packer, secure, storage_type)
-                .await?;
-            self.logger.complete_stage();
         }
 
+        self.logger.begin_stage(StageType::FesBoot);
+        let boot_download = BootDownload::new(&*self.logger);
+        boot_download
+            .execute(ctx, packer, secure, storage_type)
+            .await?;
+        self.logger.complete_stage();
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flash::protocol::tests::MockProtocol;
+    use crate::flash::{DeviceSelector, PostAction};
+    use crate::test_support::{mbr_bytes, test_firmware, FirmwareEntry};
+    use libefex::FesDataType;
+
+    fn request(mode: FlashMode) -> FlashRequest {
+        FlashRequest::new(
+            DeviceSelector::default(),
+            false,
+            mode,
+            None,
+            PostAction::Reboot,
+        )
+    }
+
+    fn complete_firmware() -> crate::test_support::TestFile {
+        let mbr = mbr_bytes(&[("system", 0x20, 3, false)]);
+        test_firmware(&[
+            FirmwareEntry {
+                filename: "sunxi_mbr.fex",
+                maintype: "12345678",
+                subtype: "1234567890___MBR",
+                data: &mbr,
+            },
+            FirmwareEntry {
+                filename: "sys_partition.fex",
+                maintype: "COMMON",
+                subtype: "SYS_CONFIG000000",
+                data: b"[partition_start]\n[partition]\nname=system\ndownloadfile=system.img\n",
+            },
+            FirmwareEntry {
+                filename: "system.img",
+                maintype: "RFSFAT16",
+                subtype: "SYSTEM_IMG000000",
+                data: b"raw",
+            },
+            FirmwareEntry {
+                filename: "preboot.fex",
+                maintype: "12345678",
+                subtype: "1234567890PREB_0",
+                data: b"preboot",
+            },
+            FirmwareEntry {
+                filename: "uboot.fex",
+                maintype: "12345678",
+                subtype: "UBOOT_0000000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "boot0.fex",
+                maintype: "12345678",
+                subtype: "1234567890BUFS_0",
+                data: b"boot0",
+            },
+        ])
+    }
+
+    #[tokio::test]
+    async fn full_handler_orders_erase_mbr_partition_preboot_boot1_boot0() {
+        let firmware = complete_firmware();
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        FesHandler::new(&mut logger)
+            .handle(&ctx, &mut packer, &request(FlashMode::FullErase))
+            .await
+            .unwrap();
+
+        let types: Vec<_> = ctx
+            .downloads
+            .borrow()
+            .iter()
+            .map(|download| download.data_type)
+            .collect();
+        assert_eq!(
+            types,
+            [
+                FesDataType::Erase,
+                FesDataType::Mbr,
+                FesDataType::Flash,
+                FesDataType::Preboot,
+                FesDataType::Boot1,
+                FesDataType::Boot0,
+            ]
+        );
+        assert_eq!(&*ctx.flash_switches.borrow(), &[(0, true), (0, false)]);
+    }
+
+    #[tokio::test]
+    async fn partition_mode_skips_erase_stage() {
+        let firmware = complete_firmware();
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        FesHandler::new(&mut logger)
+            .handle(&ctx, &mut packer, &request(FlashMode::Partition))
+            .await
+            .unwrap();
+        assert_ne!(ctx.downloads.borrow()[0].data_type, FesDataType::Erase);
+    }
+
+    #[tokio::test]
+    async fn boot_images_are_written_when_there_are_no_regular_partitions() {
+        let mbr = mbr_bytes(&[]);
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "sunxi_mbr.fex",
+                maintype: "12345678",
+                subtype: "1234567890___MBR",
+                data: &mbr,
+            },
+            FirmwareEntry {
+                filename: "preboot.fex",
+                maintype: "12345678",
+                subtype: "1234567890PREB_0",
+                data: b"preboot",
+            },
+            FirmwareEntry {
+                filename: "uboot.fex",
+                maintype: "12345678",
+                subtype: "UBOOT_0000000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "boot0.fex",
+                maintype: "12345678",
+                subtype: "1234567890BUFS_0",
+                data: b"boot0",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+
+        FesHandler::new(&mut logger)
+            .handle(&ctx, &mut packer, &request(FlashMode::FullErase))
+            .await
+            .unwrap();
+
+        let types: Vec<_> = ctx
+            .downloads
+            .borrow()
+            .iter()
+            .map(|download| download.data_type)
+            .collect();
+        assert_eq!(
+            types,
+            [
+                FesDataType::Erase,
+                FesDataType::Mbr,
+                FesDataType::Preboot,
+                FesDataType::Boot1,
+                FesDataType::Boot0,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn query_and_mbr_errors_are_propagated() {
+        for failure in ["secure", "storage", "size"] {
+            let firmware = complete_firmware();
+            let mut packer = OpenixPacker::new();
+            packer.load(firmware.path()).unwrap();
+            let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+            let ctx = MockProtocol::default();
+            match failure {
+                "secure" => *ctx.secure.borrow_mut() = Err("secure".to_string()),
+                "storage" => *ctx.storage.borrow_mut() = Err("storage".to_string()),
+                "size" => *ctx.flash_size.borrow_mut() = Err("size".to_string()),
+                _ => unreachable!(),
+            }
+            assert!(matches!(
+                FesHandler::new(&mut logger)
+                    .handle(&ctx, &mut packer, &request(FlashMode::FullErase))
+                    .await,
+                Err(FlashError::UsbTransferError(_))
+            ));
+        }
+
+        let no_mbr = test_firmware(&[]);
+        let mut packer = OpenixPacker::new();
+        packer.load(no_mbr.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        assert!(matches!(
+            FesHandler::new(&mut logger)
+                .handle(
+                    &MockProtocol::default(),
+                    &mut packer,
+                    &request(FlashMode::FullErase)
+                )
+                .await,
+            Err(FlashError::MbrNotFound)
+        ));
     }
 }

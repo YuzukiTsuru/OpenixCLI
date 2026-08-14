@@ -314,3 +314,83 @@ pub fn render_help_overlay(frame: &mut Frame) {
     let paragraph = Paragraph::new(help_text).block(block);
     frame.render_widget(paragraph, popup_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::firmware::OpenixPacker;
+    use crate::tui::event::DeviceInfo;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn render_app(app: &mut App, width: u16, height: u16, help: bool) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, app);
+                if help {
+                    render_help_overlay(frame);
+                }
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn ready_app() -> App {
+        let mut app = App::new();
+        app.devices.push(DeviceInfo {
+            bus: 1,
+            port: 2,
+            mode: "FES".into(),
+            chip: "chip".into(),
+            chip_id: 0x1890,
+            is_fel: false,
+        });
+        app.firmware.path = Some("firmware.fex".into());
+        app.set_test_packer(OpenixPacker::default());
+        app
+    }
+
+    #[test]
+    fn render_handles_minimum_narrow_wide_and_help_layouts() {
+        let mut app = App::new();
+        let tiny = render_app(&mut app, 40, 10, false);
+        assert!(tiny.contains("Terminal too small"));
+        let _ = render_app(&mut app, 1, 1, true);
+
+        let narrow = render_app(&mut app, 80, 30, false);
+        assert!(narrow.contains("OpenixCLI Terminal"));
+        assert!(narrow.contains("disabled"));
+
+        let wide = render_app(&mut app, 120, 32, true);
+        assert!(wide.contains("Help"));
+        assert!(wide.contains("Quit application"));
+    }
+
+    #[test]
+    fn render_covers_ready_input_and_flashing_statuses() {
+        let mut app = ready_app();
+        let ready = render_app(&mut app, 120, 32, false);
+        assert!(ready.contains("Press Enter"));
+        assert!(ready.contains("Enter: flash"));
+
+        app.input_mode = true;
+        app.input_buffer = "new.fex".into();
+        let input = render_app(&mut app, 120, 32, false);
+        assert!(input.contains("Path: [new.fex]"));
+
+        app.input_mode = false;
+        app.state = super::super::app::AppState::Flashing;
+        let flashing = render_app(&mut app, 120, 32, false);
+        assert!(flashing.contains("Flashing in progress"));
+        assert!(flashing.contains("Flashing..."));
+        assert!(flashing.contains("(locked)"));
+    }
+}

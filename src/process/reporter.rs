@@ -96,3 +96,41 @@ impl Default for ProgressReporter {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::process::global_progress::set_tui_mode;
+
+    #[test]
+    fn reporter_delegates_the_complete_progress_lifecycle() {
+        let _guard = crate::test_support::GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+        set_tui_mode(true);
+        let reporter = ProgressReporter::default();
+        reporter.finish();
+        reporter.define_stages(&[StageType::Init, StageType::FesPartitions]);
+        assert_eq!(reporter.current_stage(), Some(StageType::Init));
+        reporter.start();
+        reporter.begin_stage(StageType::Init);
+        reporter.update_progress_percent(100);
+        reporter.complete_stage();
+        assert_eq!(reporter.get_progress(), 3);
+
+        reporter.begin_stage(StageType::FesPartitions);
+        reporter.set_partition_stage_weight(2_000);
+        reporter.set_current_partition("rootfs");
+        reporter.update_progress(500);
+        reporter.update_progress_with_speed(1_000);
+        let snapshot = reporter.snapshot();
+        assert_eq!(snapshot.stage_progress, 1_000);
+        assert_eq!(snapshot.total_bytes, 2_000);
+        assert_eq!(reporter.current_stage(), Some(StageType::FesPartitions));
+
+        reporter.complete_stage();
+        assert_eq!(reporter.get_progress(), 83);
+        reporter.finish();
+        assert!(reporter.snapshot().stages.is_empty());
+        assert_eq!(reporter.current_stage(), None);
+        set_tui_mode(false);
+    }
+}

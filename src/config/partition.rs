@@ -213,4 +213,48 @@ mod tests {
         assert_eq!(partitions[0].name, "vendor");
         assert_eq!(partitions[0].downloadfile, "vendor.img");
     }
+
+    #[test]
+    fn defaults_are_empty_and_lookup_handles_missing_names() {
+        let parser = OpenixPartition::default();
+        assert!(parser.get_partitions().is_empty());
+        assert!(parser.get_partition_by_name("missing").is_none());
+    }
+
+    #[test]
+    fn malformed_values_fall_back_without_panicking() {
+        let data = br#"
+            [partition_start]
+            name = userdata
+            size = 0xnot-hex
+            user_type = no-number
+            keydata = 2
+            encrypt = -1
+            verify = 0
+            ro = 0
+            ignored line
+            unknown = value
+        "#;
+        let mut parser = OpenixPartition::new();
+        assert!(parser.parse_from_data(data));
+        let partition = parser.get_partition_by_name("userdata").unwrap();
+        assert_eq!(partition.size, 0);
+        assert_eq!(partition.user_type, 0);
+        assert!(partition.keydata);
+        assert!(partition.encrypt);
+        assert!(!partition.verify);
+        assert!(!partition.readonly);
+    }
+
+    #[test]
+    fn parsing_again_replaces_previous_results_and_accepts_lossy_utf8() {
+        let mut parser = OpenixPartition::new();
+        parser.parse_from_data(b"[partition_start]\nname=first\n");
+        assert!(parser.get_partition_by_name("first").is_some());
+
+        parser.parse_from_data(b"[partition_start]\nname=second\xff\nsize=42\n");
+        assert_eq!(parser.get_partitions().len(), 1);
+        assert!(parser.get_partition_by_name("first").is_none());
+        assert_eq!(parser.get_partitions()[0].size, 42);
+    }
 }

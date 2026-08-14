@@ -222,6 +222,9 @@ impl UBootHeader {
     /// Set work mode in the header
     pub fn set_work_mode(data: &mut [u8], mode: u32) {
         let data_offset = std::mem::size_of::<UBootBaseHeader>();
+        if data.len() < data_offset {
+            return;
+        }
         UBootDataHeader::set_work_mode(&mut data[data_offset..], mode);
     }
 }
@@ -249,5 +252,99 @@ pub fn get_sunxi_boot_file_mode_string(mode: u32) -> &'static str {
         BOOT_FILE_MODE_RESERVED1 => "Reserved Boot File 1",
         BOOT_FILE_MODE_PKG => "Boot Package File",
         _ => "Unknown Boot File Type",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsers_reject_short_buffers() {
+        assert!(Boot0Header::parse(&[]).is_err());
+        assert!(Boot0Header::parse_mut(&mut []).is_err());
+        assert!(UBootBaseHeader::parse(&[]).is_err());
+        assert!(UBootBaseHeader::parse_mut(&mut []).is_err());
+        assert!(UBootNormalGpioCfg::parse(&[]).is_err());
+        assert!(UBootDataHeader::parse(&[]).is_err());
+        assert!(UBootDataHeader::parse_mut(&mut []).is_err());
+        assert!(UBootHeader::parse(&[]).is_err());
+        assert!(UBootHeader::parse_mut(&mut []).is_err());
+    }
+
+    #[test]
+    fn boot0_mutation_and_string_accessors_round_trip() {
+        let mut bytes = vec![0u8; std::mem::size_of::<Boot0Header>()];
+        let header = Boot0Header::parse_mut(&mut bytes).unwrap();
+        header.magic = *b"eGON.BT0";
+        header.platform = *b"sun50iw9";
+
+        let parsed = Boot0Header::parse(&bytes).unwrap();
+        assert_eq!(parsed.magic_str(), "eGON.BT0");
+        assert_eq!(parsed.platform_str(), "sun50iw9");
+    }
+
+    #[test]
+    fn uboot_headers_mutate_and_report_strings() {
+        let mut base_bytes = vec![0u8; std::mem::size_of::<UBootBaseHeader>()];
+        let base = UBootBaseHeader::parse_mut(&mut base_bytes).unwrap();
+        base.magic = *b"uboot\0\0\0";
+        base.version = *b"v1.2.3\0\0";
+        base.platform = *b"sun55iw3";
+        let base = UBootBaseHeader::parse(&base_bytes).unwrap();
+        assert_eq!(base.magic_str(), "uboot\0\0\0");
+        assert_eq!(base.version_str(), "v1.2.3\0\0");
+        assert_eq!(base.platform_str(), "sun55iw3");
+
+        let mut gpio_bytes = vec![0u8; std::mem::size_of::<UBootNormalGpioCfg>()];
+        gpio_bytes[0] = 3;
+        let gpio = UBootNormalGpioCfg::parse(&gpio_bytes).unwrap();
+        assert_eq!(gpio.port, 3);
+    }
+
+    #[test]
+    fn work_mode_setters_accept_full_and_short_buffers() {
+        let mut data_bytes = vec![0u8; std::mem::size_of::<UBootDataHeader>()];
+        UBootDataHeader::set_work_mode(&mut data_bytes, WORK_MODE_USB_PRODUCT);
+        let data = UBootDataHeader::parse(&data_bytes).unwrap();
+        let work_mode = data.work_mode;
+        assert_eq!(work_mode, WORK_MODE_USB_PRODUCT as i32);
+
+        let mut uboot_bytes = vec![0u8; std::mem::size_of::<UBootHeader>()];
+        UBootHeader::set_work_mode(&mut uboot_bytes, 0x55);
+        let uboot = UBootHeader::parse_mut(&mut uboot_bytes).unwrap();
+        let work_mode = uboot.uboot_data.work_mode;
+        assert_eq!(work_mode, 0x55);
+
+        UBootHeader::set_work_mode(&mut [], 1);
+        UBootHeader::set_work_mode(&mut [0; 1], 1);
+    }
+
+    #[test]
+    fn boot_file_mode_names_cover_known_and_unknown_values() {
+        assert_eq!(
+            get_sunxi_boot_file_mode_string(BOOT_FILE_MODE_NORMAL),
+            "Normal Boot File"
+        );
+        assert_eq!(
+            get_sunxi_boot_file_mode_string(BOOT_FILE_MODE_TOC),
+            "TOC Boot File"
+        );
+        assert_eq!(
+            get_sunxi_boot_file_mode_string(BOOT_FILE_MODE_RESERVED0),
+            "Reserved Boot File 0"
+        );
+        assert_eq!(
+            get_sunxi_boot_file_mode_string(BOOT_FILE_MODE_RESERVED1),
+            "Reserved Boot File 1"
+        );
+        assert_eq!(
+            get_sunxi_boot_file_mode_string(BOOT_FILE_MODE_PKG),
+            "Boot Package File"
+        );
+        assert_eq!(
+            get_sunxi_boot_file_mode_string(u32::MAX),
+            "Unknown Boot File Type"
+        );
     }
 }
