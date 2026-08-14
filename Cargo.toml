@@ -7,22 +7,23 @@ license = "MIT"
 authors = ["YuzukiTsuru"]
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-log = "0.4"
-env_logger = "0.11"
-thiserror = "2.0"
-anyhow = "1.0"
-indicatif = "0.18"
-colored = "3.0"
+clap = { version = "4.6", features = ["derive"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "sync"] }
+log = "0.4.33"
+env_logger = "0.11.11"
+thiserror = "2.0.20"
+anyhow = "1.0.104"
+indicatif = "0.18.6"
+colored = "3.1"
 byteorder = "1.5"
-memmap2 = "0.9"
-once_cell = "1.19"
-ratatui = "0.30"
+memmap2 = "0.9.11"
+once_cell = "1.21"
+ratatui = "0.30.2"
 crossterm = "0.29"
 
 [dependencies.libefex]
 git = "https://github.com/YuzukiTsuru/libefex"
+rev = "3752e38ff8e69190c53cd43290a8102beab55e73"
 
 [[bin]]
 name = "openixcli"
