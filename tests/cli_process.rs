@@ -9,7 +9,7 @@ fn missing_firmware_path(command: &str) -> PathBuf {
 
 #[test]
 fn firmware_commands_dispatch_and_reject_a_missing_input() {
-    for command in ["flash", "inspect", "unpack"] {
+    for command in ["flash", "inspect", "unpack", "convert"] {
         let missing = missing_firmware_path(command);
         assert!(!missing.exists(), "test fixture unexpectedly exists");
 
