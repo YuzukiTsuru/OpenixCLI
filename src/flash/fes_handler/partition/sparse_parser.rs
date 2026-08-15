@@ -815,6 +815,7 @@ mod tests {
     use crate::firmware::sparse::{
         add_sum, SparseHeader, CHUNK_TYPE_CRC32, SPARSE_HEADER_MAGIC, SPARSE_HEADER_MAJOR_VER,
     };
+    use crate::flash::fes_handler::types::PartitionSource;
     use crate::flash::protocol::{tests::MockProtocol, VerifyResponse};
     use crate::test_support::{test_firmware, write_struct, FirmwareEntry};
     use std::io::Cursor;
@@ -912,6 +913,8 @@ mod tests {
             download_subtype: "SYSTEM0000000000".to_string(),
             data_offset: 0,
             data_length: length as u64,
+            source: PartitionSource::Firmware,
+            wrap_address: false,
         }
     }
 

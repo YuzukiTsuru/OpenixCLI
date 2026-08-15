@@ -52,6 +52,12 @@ impl<'a> UbifsConfig<'a> {
         }
 
         for partition_info in download_list {
+            if !matches!(
+                partition_info.source,
+                super::types::PartitionSource::Firmware
+            ) {
+                continue;
+            }
             let partition_name = &partition_info.partition_name;
 
             if Self::should_skip_partition(partition_name) {
@@ -144,6 +150,8 @@ mod tests {
             download_subtype: subtype.to_string(),
             data_offset: 0,
             data_length: 4,
+            source: super::super::types::PartitionSource::Firmware,
+            wrap_address: false,
         }
     }
 

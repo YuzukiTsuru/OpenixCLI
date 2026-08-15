@@ -14,7 +14,9 @@ pub mod request;
 pub use events::{FlashEvent, FlashEventSink, FlashLogLevel};
 pub use fel_handler::FelHandler;
 pub use fes_handler::FesHandler;
-pub use request::{DeviceSelector, FlashMode, FlashRequest, PostAction};
+pub use request::{
+    CustomFlashLayout, DeviceSelector, ExternalPartition, FlashMode, FlashRequest, PostAction,
+};
 
 use crate::firmware::OpenixPacker;
 use crate::flash::protocol::{FelOps, FesOps};

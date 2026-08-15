@@ -10,6 +10,7 @@ pub mod convert;
 pub mod firmware;
 pub mod flash;
 pub mod process;
+pub mod raw;
 pub mod tui;
 pub mod utils;
 

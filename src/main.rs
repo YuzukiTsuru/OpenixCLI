@@ -18,6 +18,7 @@ use clap::Parser;
 use openixcli::cli::{Cli, Commands, UsbBackendArg};
 use openixcli::commands::{self, parse_partition_list, FlashArgs};
 use openixcli::convert::ConvertOptions;
+use openixcli::raw::RawOptions;
 use openixcli::tui;
 use openixcli::utils::TermLogger;
 
@@ -130,6 +131,28 @@ async fn main() -> anyhow::Result<()> {
                 nor_size,
                 storage_size,
                 secure,
+            })
+            .await?;
+        }
+        Some(Commands::Raw {
+            firmware,
+            image,
+            mode,
+            storage,
+            logic_offset,
+            bus,
+            port,
+        }) => {
+            setup_logging(cli.verbose);
+            commands::raw::execute(RawOptions {
+                firmware_path: firmware.into(),
+                image_path: image.into(),
+                mode,
+                storage,
+                logic_offset,
+                bus,
+                port,
+                verbose: cli.verbose,
             })
             .await?;
         }

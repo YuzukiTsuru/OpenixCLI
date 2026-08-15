@@ -1,6 +1,7 @@
 //! Shared flash request and option types.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// Flash mode options.
@@ -164,6 +165,54 @@ impl DeviceSelector {
     }
 }
 
+/// A partition whose payload is read from a standalone file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalPartition {
+    pub name: String,
+    pub path: PathBuf,
+    pub address: u64,
+    pub data_length: u64,
+    pub wrap_address: bool,
+}
+
+impl ExternalPartition {
+    pub fn new(
+        name: impl Into<String>,
+        path: impl AsRef<Path>,
+        address: u64,
+        data_length: u64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            path: path.as_ref().to_path_buf(),
+            address,
+            data_length,
+            wrap_address: false,
+        }
+    }
+
+    pub fn with_wrapping_address(mut self, wrap_address: bool) -> Self {
+        self.wrap_address = wrap_address;
+        self
+    }
+}
+
+/// An MBR and external partition list supplied by a specialized flash command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomFlashLayout {
+    pub mbr_data: Vec<u8>,
+    pub partitions: Vec<ExternalPartition>,
+}
+
+impl CustomFlashLayout {
+    pub fn new(mbr_data: Vec<u8>, partitions: Vec<ExternalPartition>) -> Self {
+        Self {
+            mbr_data,
+            partitions,
+        }
+    }
+}
+
 /// Fully resolved flash request used by CLI and TUI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlashRequest {
@@ -172,6 +221,7 @@ pub struct FlashRequest {
     pub mode: FlashMode,
     pub partitions: Option<Vec<String>>,
     pub post_action: PostAction,
+    pub custom_layout: Option<CustomFlashLayout>,
 }
 
 impl FlashRequest {
@@ -188,7 +238,13 @@ impl FlashRequest {
             mode,
             partitions,
             post_action,
+            custom_layout: None,
         }
+    }
+
+    pub fn with_custom_layout(mut self, layout: CustomFlashLayout) -> Self {
+        self.custom_layout = Some(layout);
+        self
     }
 }
 
@@ -293,5 +349,23 @@ mod tests {
         assert_eq!(request.mode, FlashMode::KeepData);
         assert_eq!(request.partitions, Some(vec!["boot".to_string()]));
         assert_eq!(request.post_action, PostAction::Shutdown);
+    }
+
+    #[test]
+    fn flash_request_can_carry_an_external_layout() {
+        let layout = CustomFlashLayout::new(
+            vec![1, 2, 3],
+            vec![ExternalPartition::new("raw", "disk.img", 0x1234, 513)],
+        );
+        let request = FlashRequest::new(
+            DeviceSelector::default(),
+            false,
+            FlashMode::FullErase,
+            None,
+            PostAction::Reboot,
+        )
+        .with_custom_layout(layout.clone());
+
+        assert_eq!(request.custom_layout, Some(layout));
     }
 }

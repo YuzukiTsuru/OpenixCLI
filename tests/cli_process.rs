@@ -29,4 +29,14 @@ fn firmware_commands_dispatch_and_reject_a_missing_input() {
             "unexpected {command} stderr: {stderr}"
         );
     }
+
+    let missing = missing_firmware_path("raw");
+    let output = Command::new(env!("CARGO_BIN_EXE_openixcli"))
+        .arg("raw")
+        .arg(&missing)
+        .arg("raw.img")
+        .output()
+        .expect("openixcli process should start");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Firmware file not found"));
 }

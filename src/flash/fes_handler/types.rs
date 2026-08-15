@@ -2,8 +2,16 @@
 //!
 //! Provides types and structures used by FES handler
 
+use std::path::PathBuf;
+
 /// Item type for root filesystem FAT16 partition
 pub const ITEM_ROOTFSFAT16: &str = "RFSFAT16";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PartitionSource {
+    Firmware,
+    ExternalFile(PathBuf),
+}
 
 /// FES data type values for verify operations
 pub mod fes_data_type {
@@ -35,6 +43,8 @@ pub struct PartitionDownloadInfo {
     pub download_subtype: String,
     pub data_offset: u64,
     pub data_length: u64,
+    pub source: PartitionSource,
+    pub wrap_address: bool,
 }
 
 /// Incremental checksum calculator
@@ -136,6 +146,8 @@ mod tests {
             download_subtype: "SYSTEM_IMG000000".into(),
             data_offset: 2,
             data_length: 3,
+            source: PartitionSource::Firmware,
+            wrap_address: false,
         };
         let mut cloned = info.clone();
         cloned.partition_name = "vendor".into();

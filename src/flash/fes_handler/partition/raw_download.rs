@@ -3,14 +3,20 @@
 //! Handles downloading raw (non-sparse) partition data to device storage
 
 use super::super::constants;
-use super::super::types::{IncrementalChecksum, PartitionDownloadInfo, ITEM_ROOTFSFAT16};
+use super::super::types::{
+    IncrementalChecksum, PartitionDownloadInfo, PartitionSource, ITEM_ROOTFSFAT16,
+};
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::firmware::OpenixPacker;
 use crate::flash::protocol::FesOps;
 use crate::utils::{FlashError, FlashResult, Logger};
 use libefex::FesDataType;
+use std::fs::File;
+use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+const EXTERNAL_FILE_CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Raw partition downloader
 ///
@@ -46,69 +52,99 @@ impl<'a> RawDownloader<'a> {
         info: &PartitionDownloadInfo,
         verify: bool,
     ) -> FlashResult<()> {
-        let start_sector = u32::try_from(info.partition_address).map_err(|_| {
-            FlashError::InvalidFirmwareFormat(format!(
-                "Partition {} address exceeds FES sector range: {}",
-                info.partition_name, info.partition_address
-            ))
-        })?;
+        let start_sector = start_sector(info)?;
         if info.data_length == 0 {
             self.logger
                 .stage_complete(&format!("Partition {} is empty", info.partition_name));
             return Ok(());
         }
-        let total_chunks = info.data_length.div_ceil(constants::CHUNK_SIZE);
+        let chunk_limit = if matches!(info.source, PartitionSource::ExternalFile(_)) {
+            EXTERNAL_FILE_CHUNK_SIZE
+        } else {
+            constants::CHUNK_SIZE
+        };
+        let total_chunks = info.data_length.div_ceil(chunk_limit);
         let mut checksum = if verify {
             Some(IncrementalChecksum::new())
         } else {
             None
         };
+        let mut external_file = match &info.source {
+            PartitionSource::Firmware => None,
+            PartitionSource::ExternalFile(path) => {
+                let file = File::open(path).map_err(|error| {
+                    FlashError::PartitionDownloadFailed(format!(
+                        "Failed to open {}: {}",
+                        path.display(),
+                        error
+                    ))
+                })?;
+                let current_length = file
+                    .metadata()
+                    .map_err(|error| {
+                        FlashError::PartitionDownloadFailed(format!(
+                            "Failed to inspect {}: {}",
+                            path.display(),
+                            error
+                        ))
+                    })?
+                    .len();
+                if current_length != info.data_length {
+                    return Err(FlashError::PartitionDownloadFailed(format!(
+                        "Raw image size changed before flashing: expected {}, found {} bytes",
+                        info.data_length, current_length
+                    )));
+                }
+                Some(file)
+            }
+        };
 
         for chunk_index in 0..total_chunks {
-            let chunk_offset = chunk_index * constants::CHUNK_SIZE;
-            let chunk_size = std::cmp::min(
-                constants::CHUNK_SIZE,
-                info.data_length.saturating_sub(chunk_offset),
-            );
+            let chunk_offset = chunk_index * chunk_limit;
+            let chunk_size =
+                std::cmp::min(chunk_limit, info.data_length.saturating_sub(chunk_offset));
 
-            let chunk_data = packer
-                .get_file_data_range_by_maintype_subtype(
-                    ITEM_ROOTFSFAT16,
-                    &info.download_subtype,
-                    chunk_offset,
-                    chunk_size,
-                )
-                .or_else(|_| {
-                    packer.get_file_data_range_by_maintype_subtype(
-                        "12345678",
+            let chunk_data = if let Some(file) = external_file.as_mut() {
+                let chunk_len = usize::try_from(chunk_size).map_err(|_| {
+                    FlashError::PartitionDownloadFailed("Raw image chunk is too large".to_string())
+                })?;
+                let mut data = vec![0u8; chunk_len];
+                file.read_exact(&mut data).map_err(|error| {
+                    FlashError::PartitionDownloadFailed(format!(
+                        "Failed to read {} at offset {}: {}",
+                        info.download_filename, chunk_offset, error
+                    ))
+                })?;
+                data
+            } else {
+                packer
+                    .get_file_data_range_by_maintype_subtype(
+                        ITEM_ROOTFSFAT16,
                         &info.download_subtype,
                         chunk_offset,
                         chunk_size,
                     )
-                })
-                .map_err(|error| {
-                    FlashError::PartitionDownloadFailed(format!(
-                        "Failed to read {} at offset {}: {}",
-                        info.partition_name, chunk_offset, error
-                    ))
-                })?;
+                    .or_else(|_| {
+                        packer.get_file_data_range_by_maintype_subtype(
+                            "12345678",
+                            &info.download_subtype,
+                            chunk_offset,
+                            chunk_size,
+                        )
+                    })
+                    .map_err(|error| {
+                        FlashError::PartitionDownloadFailed(format!(
+                            "Failed to read {} at offset {}: {}",
+                            info.partition_name, chunk_offset, error
+                        ))
+                    })?
+            };
 
             if let Some(ref mut cs) = checksum {
                 cs.update(&chunk_data);
             }
 
-            let sector_offset = u32::try_from(chunk_offset / 512).map_err(|_| {
-                FlashError::InvalidFirmwareFormat(format!(
-                    "Partition {} data offset exceeds FES sector range",
-                    info.partition_name
-                ))
-            })?;
-            let chunk_start_sector = start_sector.checked_add(sector_offset).ok_or_else(|| {
-                FlashError::InvalidFirmwareFormat(format!(
-                    "Partition {} end address exceeds FES sector range",
-                    info.partition_name
-                ))
-            })?;
+            let chunk_start_sector = download_sector(info, start_sector, chunk_offset / 512)?;
             let written_bytes = Arc::clone(&self.written_bytes);
             let last_speed_update = Arc::clone(&self.last_speed_update);
             let chunk_base_bytes = self.written_bytes.load(Ordering::SeqCst);
@@ -175,6 +211,48 @@ impl<'a> RawDownloader<'a> {
     }
 }
 
+fn start_sector(info: &PartitionDownloadInfo) -> FlashResult<u32> {
+    let max_address = match (&info.source, info.wrap_address) {
+        (PartitionSource::ExternalFile(_), true) => u64::from(u32::MAX) + 1,
+        (_, false) => u64::from(u32::MAX),
+        (PartitionSource::Firmware, true) => {
+            return Err(FlashError::InvalidFirmwareFormat(
+                "Address wrapping is only supported for external partitions".to_string(),
+            ));
+        }
+    };
+    if info.partition_address > max_address {
+        return Err(FlashError::InvalidFirmwareFormat(format!(
+            "Partition {} address exceeds FES sector range: {}",
+            info.partition_name, info.partition_address
+        )));
+    }
+    Ok(info.partition_address as u32)
+}
+
+fn download_sector(
+    info: &PartitionDownloadInfo,
+    start_sector: u32,
+    sector_offset: u64,
+) -> FlashResult<u32> {
+    let sector_offset = u32::try_from(sector_offset).map_err(|_| {
+        FlashError::InvalidFirmwareFormat(format!(
+            "Partition {} data offset exceeds FES sector range",
+            info.partition_name
+        ))
+    })?;
+    if info.wrap_address {
+        Ok(start_sector.wrapping_add(sector_offset))
+    } else {
+        start_sector.checked_add(sector_offset).ok_or_else(|| {
+            FlashError::InvalidFirmwareFormat(format!(
+                "Partition {} end address exceeds FES sector range",
+                info.partition_name
+            ))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +267,8 @@ mod tests {
             download_subtype: "SYSTEM0000000000".to_string(),
             data_offset: 0,
             data_length: length,
+            source: PartitionSource::Firmware,
+            wrap_address: false,
         }
     }
 
@@ -326,5 +406,16 @@ mod tests {
                 .await,
             Err(FlashError::UsbTransferError(_))
         ));
+    }
+
+    #[test]
+    fn logic_offset_download_addresses_wrap_at_the_u32_boundary() {
+        let mut external = info(u64::from(u32::MAX) - 1, 1);
+        external.source = PartitionSource::ExternalFile("raw.img".into());
+        external.wrap_address = true;
+        assert_eq!(download_sector(&external, u32::MAX - 1, 2).unwrap(), 0);
+
+        external.wrap_address = false;
+        assert!(download_sector(&external, u32::MAX - 1, 2).is_err());
     }
 }

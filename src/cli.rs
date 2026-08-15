@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 pub use crate::convert::{ConvertTarget, SecureMode};
 use crate::flash::{FlashMode, PostAction};
+pub use crate::raw::{RawMode, RawStorage};
 
 /// Main CLI structure
 ///
@@ -164,6 +165,37 @@ pub enum Commands {
         secure: SecureMode,
     },
 
+    /// Flash a raw disk image using an IMAGEWTY boot firmware
+    Raw {
+        /// Path to the IMAGEWTY boot firmware
+        #[arg(help = "Path to boot firmware file")]
+        firmware: String,
+
+        /// Path to the raw disk image
+        #[arg(help = "Path to raw image file")]
+        image: String,
+
+        /// Raw flashing mode
+        #[arg(long, value_enum, default_value_t = RawMode::LogicOffset)]
+        mode: RawMode,
+
+        /// Target storage used to select the default logical offset
+        #[arg(long, value_enum, default_value_t = RawStorage::Sdmmc)]
+        storage: RawStorage,
+
+        /// Logical offset in 512-byte sectors
+        #[arg(long)]
+        logic_offset: Option<u64>,
+
+        /// USB bus number
+        #[arg(short, long)]
+        bus: Option<u8>,
+
+        /// USB port number
+        #[arg(short = 'P', long)]
+        port: Option<u8>,
+    },
+
     /// Launch interactive TUI mode
     Tui,
 }
@@ -262,6 +294,52 @@ mod tests {
     }
 
     #[test]
+    fn parses_raw_defaults_and_both_modes() {
+        let defaults = Cli::try_parse_from(["openixcli", "raw", "boot.img", "disk.img"]).unwrap();
+        assert!(matches!(
+            defaults.command,
+            Some(Commands::Raw {
+                firmware,
+                image,
+                mode: RawMode::LogicOffset,
+                storage: RawStorage::Sdmmc,
+                logic_offset: None,
+                bus: None,
+                port: None,
+            }) if firmware == "boot.img" && image == "disk.img"
+        ));
+
+        let command = Cli::try_parse_from([
+            "openixcli",
+            "raw",
+            "boot.img",
+            "disk.img",
+            "--mode",
+            "command",
+            "--storage",
+            "nor",
+            "--logic-offset",
+            "2106",
+            "--bus",
+            "2",
+            "--port",
+            "7",
+        ])
+        .unwrap();
+        assert!(matches!(
+            command.command,
+            Some(Commands::Raw {
+                mode: RawMode::Command,
+                storage: RawStorage::Nor,
+                logic_offset: Some(2106),
+                bus: Some(2),
+                port: Some(7),
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn parses_all_flash_options_and_defaults() {
         let defaults = Cli::try_parse_from(["openixcli", "flash", "firmware.fex"]).unwrap();
         assert!(matches!(
@@ -312,6 +390,7 @@ mod tests {
     fn rejects_invalid_values_and_missing_required_arguments() {
         assert!(Cli::try_parse_from(["openixcli", "--backend", "invalid"]).is_err());
         assert!(Cli::try_parse_from(["openixcli", "flash"]).is_err());
+        assert!(Cli::try_parse_from(["openixcli", "raw"]).is_err());
         assert!(
             Cli::try_parse_from(["openixcli", "flash", "firmware.fex", "--mode", "invalid"])
                 .is_err()
