@@ -6,7 +6,7 @@ use crate::firmware::OpenixPacker;
 use crate::flash::{FlashMode, FlashRequest};
 use crate::utils::{FlashResult, Logger};
 
-use super::types::{PartitionDownloadInfo, ITEM_ROOTFSFAT16};
+use super::types::{PartitionDownloadInfo, PartitionSource, ITEM_ROOTFSFAT16};
 
 /// Builds the list of partition images that should be written for a request.
 pub struct PartitionPlanner<'a> {
@@ -70,6 +70,8 @@ impl<'a> PartitionPlanner<'a> {
                     download_subtype,
                     data_offset: offset,
                     data_length: length,
+                    source: PartitionSource::Firmware,
+                    wrap_address: false,
                 });
             } else {
                 self.logger.warn(&format!(

@@ -19,6 +19,7 @@ OpenixCLI is a powerful and user-friendly CLI tool designed for flashing firmwar
 - **Verification**: Optional write verification for data integrity
 - **Progress Tracking**: Visual progress indicators during flash operations
 - **Partition Selection**: Flash specific partitions or entire firmware
+- **Raw Image Flashing**: Flash standalone disk images through a virtual Sunxi MBR
 - **Firmware Conversion**: Convert IMAGEWTY packages to raw SPI NOR, SD card, eMMC, SD NAND, or UFS programmer images
 - **Verbose Logging**: Detailed debug output for troubleshooting
 
@@ -107,6 +108,55 @@ Flash and power off after completion:
 openixcli flash firmware.img --post-action poweroff
 ```
 
+### Flash a Raw Image
+
+Flash a standalone raw disk image by using an IMAGEWTY firmware package as the boot firmware. The
+boot firmware supplies FES, U-Boot, Boot0/Boot1, and related board configuration; its normal
+partition images are not written. OpenixCLI creates a temporary Sunxi MBR containing one `raw`
+partition and streams the external image to that partition in 10 MiB windows.
+
+> **Warning:** The `raw` command always performs a full erase, disables download verification, and
+> reboots the board after flashing. All existing data on the target storage will be destroyed.
+
+```bash
+openixcli raw <boot_firmware> <raw_image> [options]
+```
+
+The default mode is `logic-offset` for SD/eMMC with a 40960-sector offset:
+
+```bash
+openixcli raw boot.img disk.img
+openixcli raw boot.img disk.img --mode logic-offset --storage ufs
+```
+
+Use `command` mode to place the virtual raw partition at sector 0:
+
+```bash
+openixcli raw boot.img disk.img --mode command
+```
+
+Override the logical offset or select the NOR default (2106 sectors):
+
+```bash
+openixcli raw boot.img disk.img --logic-offset 8192
+openixcli raw boot.img disk.img --storage nor
+```
+
+#### Raw Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--mode` | | `command` or `logic-offset` (default: `logic-offset`) |
+| `--storage` | | `sdmmc`, `ufs`, or `nor` (default: `sdmmc`) |
+| `--logic-offset` | | Override the logical offset in 512-byte sectors; valid range: 0 through `0x100000000` |
+| `--bus` | `-b` | USB bus number |
+| `--port` | `-P` | USB port number |
+| `--verbose` | `-v` | Enable verbose output |
+
+In `logic-offset` mode, the virtual partition starts at `0x100000000 - logic_offset`. The MBR copy
+count is inherited from the boot firmware when its MBR is valid, otherwise it defaults to one. The
+default logical offset is 40960 sectors for `sdmmc` and `ufs`, and 2106 sectors for `nor`.
+
 ### Convert Firmware
 
 Convert an IMAGEWTY firmware package to a raw programmer image. The command reads the embedded
@@ -164,6 +214,7 @@ OpenixCLI/
 │   ├── firmware/      # Firmware image handling
 │   ├── flash/         # Flashing logic (FEL/FES handlers)
 │   ├── process/       # Stage and progress tracking
+│   ├── raw/           # Virtual MBR and standalone raw-image flashing
 │   ├── tui/           # Interactive terminal UI
 │   ├── utils/         # Utilities (logging, errors)
 │   ├── cli.rs         # CLI argument definitions

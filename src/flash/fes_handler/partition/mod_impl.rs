@@ -3,7 +3,7 @@
 //! Handles the main partition download logic, including format detection
 //! and delegation to appropriate downloaders (raw or sparse)
 
-use super::super::types::{PartitionDownloadInfo, ITEM_ROOTFSFAT16};
+use super::super::types::{PartitionDownloadInfo, PartitionSource, ITEM_ROOTFSFAT16};
 use super::raw_download::RawDownloader;
 use super::sparse_parser::SparseDownloader;
 use crate::firmware::sparse::SPARSE_HEADER_SIZE;
@@ -105,27 +105,31 @@ impl<'a> PartitionDownload<'a> {
         self.logger.set_current_partition(&info.partition_name);
         self.last_speed_update.store(0, Ordering::SeqCst);
 
-        let probe_data = packer
-            .get_file_data_range_by_maintype_subtype(
-                ITEM_ROOTFSFAT16,
-                &info.download_subtype,
-                0,
-                SPARSE_HEADER_SIZE as u64,
-            )
-            .or_else(|_| {
-                packer.get_file_data_range_by_maintype_subtype(
-                    "12345678",
-                    &info.download_subtype,
-                    0,
-                    SPARSE_HEADER_SIZE as u64,
-                )
-            });
-
-        let is_sparse = match probe_data {
-            Ok(ref data) if data.len() >= SPARSE_HEADER_SIZE => {
-                crate::firmware::sparse::is_sparse_format(data)
+        let is_sparse = match &info.source {
+            PartitionSource::ExternalFile(_) => false,
+            PartitionSource::Firmware => {
+                let probe_data = packer
+                    .get_file_data_range_by_maintype_subtype(
+                        ITEM_ROOTFSFAT16,
+                        &info.download_subtype,
+                        0,
+                        SPARSE_HEADER_SIZE as u64,
+                    )
+                    .or_else(|_| {
+                        packer.get_file_data_range_by_maintype_subtype(
+                            "12345678",
+                            &info.download_subtype,
+                            0,
+                            SPARSE_HEADER_SIZE as u64,
+                        )
+                    });
+                match probe_data {
+                    Ok(ref data) if data.len() >= SPARSE_HEADER_SIZE => {
+                        crate::firmware::sparse::is_sparse_format(data)
+                    }
+                    _ => false,
+                }
             }
-            _ => false,
         };
 
         if is_sparse {
@@ -179,8 +183,9 @@ impl<'a> PartitionDownload<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flash::fes_handler::types::PartitionSource;
     use crate::flash::protocol::tests::MockProtocol;
-    use crate::test_support::{test_firmware, FirmwareEntry};
+    use crate::test_support::{temp_file, test_firmware, FirmwareEntry};
 
     fn info(length: u64) -> PartitionDownloadInfo {
         PartitionDownloadInfo {
@@ -190,6 +195,8 @@ mod tests {
             download_subtype: "SYSTEM0000000000".to_string(),
             data_offset: 0,
             data_length: length,
+            source: PartitionSource::Firmware,
+            wrap_address: false,
         }
     }
 
@@ -225,6 +232,37 @@ mod tests {
             .unwrap();
         assert_eq!(&*ctx.flash_switches.borrow(), &[(0, true), (0, false)]);
         assert_eq!(ctx.downloads.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn external_raw_file_is_streamed_to_its_virtual_partition() {
+        let raw = temp_file("external-raw", b"external payload");
+        let firmware = test_firmware(&[]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        let external = PartitionDownloadInfo {
+            partition_name: "raw".to_string(),
+            partition_address: 0x1_0000_0000,
+            download_filename: raw.path().display().to_string(),
+            download_subtype: String::new(),
+            data_offset: 0,
+            data_length: 16,
+            source: PartitionSource::ExternalFile(raw.path().to_path_buf()),
+            wrap_address: true,
+        };
+
+        PartitionDownload::new(&mut logger)
+            .execute(&ctx, &mut packer, &[external], false)
+            .await
+            .unwrap();
+
+        assert_eq!(&*ctx.flash_switches.borrow(), &[(0, true), (0, false)]);
+        let downloads = ctx.downloads.borrow();
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].addr, 0);
+        assert_eq!(downloads[0].data, b"external payload");
     }
 
     #[tokio::test]

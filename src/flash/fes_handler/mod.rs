@@ -20,10 +20,10 @@ pub use partition_planner::PartitionPlanner;
 pub use ubifs_config::UbifsConfig;
 
 use crate::config::boot_header::get_sunxi_boot_file_mode_string;
-use crate::config::mbr_parser::SunxiMbr;
+use crate::config::mbr_parser::{MbrInfo, SunxiMbr};
 use crate::firmware::{OpenixPacker, StorageType};
 use crate::flash::protocol::FesOps;
-use crate::flash::{FlashMode, FlashRequest};
+use crate::flash::{CustomFlashLayout, FlashMode, FlashRequest};
 use crate::process::StageType;
 use crate::utils::{FlashError, FlashResult, Logger};
 
@@ -92,7 +92,11 @@ impl<'a> FesHandler<'a> {
 
         self.logger.begin_stage(StageType::FesMbr);
 
-        let mbr_data = packer.get_mbr().map_err(|_| FlashError::MbrNotFound)?;
+        let mbr_data = if let Some(layout) = &request.custom_layout {
+            layout.mbr_data.clone()
+        } else {
+            packer.get_mbr().map_err(|_| FlashError::MbrNotFound)?
+        };
         let mbr = SunxiMbr::parse(&mbr_data)
             .map_err(|e| FlashError::InvalidFirmwareFormat(e.to_string()))?;
         let mbr_info = mbr.to_mbr_info();
@@ -100,8 +104,12 @@ impl<'a> FesHandler<'a> {
         self.logger
             .info(&format!("Found {} partitions in MBR", mbr_info.part_count));
 
-        let partition_planner = PartitionPlanner::new(&*self.logger);
-        let download_list = partition_planner.prepare(packer, &mbr_info, request)?;
+        let download_list = if let Some(layout) = &request.custom_layout {
+            prepare_custom_downloads(layout, &mbr_info)?
+        } else {
+            let partition_planner = PartitionPlanner::new(&*self.logger);
+            partition_planner.prepare(packer, &mbr_info, request)?
+        };
 
         let ubifs_config = UbifsConfig::new(&*self.logger);
         ubifs_config.execute(
@@ -143,10 +151,62 @@ impl<'a> FesHandler<'a> {
     }
 }
 
+fn prepare_custom_downloads(
+    layout: &CustomFlashLayout,
+    mbr_info: &MbrInfo,
+) -> FlashResult<Vec<types::PartitionDownloadInfo>> {
+    layout
+        .partitions
+        .iter()
+        .map(|external| {
+            let partition = mbr_info
+                .partitions
+                .iter()
+                .find(|partition| partition.name == external.name)
+                .ok_or_else(|| {
+                    FlashError::InvalidFirmwareFormat(format!(
+                        "External partition {} is missing from the custom MBR",
+                        external.name
+                    ))
+                })?;
+            if partition.address() != external.address {
+                return Err(FlashError::InvalidFirmwareFormat(format!(
+                    "External partition {} address does not match the custom MBR",
+                    external.name
+                )));
+            }
+            let capacity = partition.length().checked_mul(512).ok_or_else(|| {
+                FlashError::InvalidFirmwareFormat(format!(
+                    "External partition {} capacity is too large",
+                    external.name
+                ))
+            })?;
+            if external.data_length > capacity {
+                return Err(FlashError::InvalidFirmwareFormat(format!(
+                    "External partition {} data exceeds its MBR capacity",
+                    external.name
+                )));
+            }
+
+            Ok(types::PartitionDownloadInfo {
+                partition_name: external.name.clone(),
+                partition_address: external.address,
+                download_filename: external.path.display().to_string(),
+                download_subtype: String::new(),
+                data_offset: 0,
+                data_length: external.data_length,
+                source: types::PartitionSource::ExternalFile(external.path.clone()),
+                wrap_address: external.wrap_address,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flash::protocol::tests::MockProtocol;
+    use crate::flash::{CustomFlashLayout, ExternalPartition};
     use crate::flash::{DeviceSelector, PostAction};
     use crate::test_support::{mbr_bytes, test_firmware, FirmwareEntry};
     use libefex::FesDataType;
@@ -247,6 +307,39 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(ctx.downloads.borrow()[0].data_type, FesDataType::Erase);
+    }
+
+    #[tokio::test]
+    async fn custom_layout_replaces_the_firmware_mbr_and_partition_source() {
+        let raw = crate::test_support::temp_file("fes-custom-raw", b"raw payload");
+        let firmware = complete_firmware();
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let custom_mbr = crate::raw::build_virtual_mbr(0x40, 1, 1).unwrap();
+        let request = request(FlashMode::FullErase).with_custom_layout(CustomFlashLayout::new(
+            custom_mbr.clone(),
+            vec![ExternalPartition::new("raw", raw.path(), 0x40, 11)],
+        ));
+        let mut logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+
+        FesHandler::new(&mut logger)
+            .handle(&ctx, &mut packer, &request)
+            .await
+            .unwrap();
+
+        let downloads = ctx.downloads.borrow();
+        let mbr = downloads
+            .iter()
+            .find(|download| download.data_type == FesDataType::Mbr)
+            .unwrap();
+        assert_eq!(mbr.data, custom_mbr);
+        let raw_download = downloads
+            .iter()
+            .find(|download| download.data_type == FesDataType::Flash)
+            .unwrap();
+        assert_eq!(raw_download.addr, 0x40);
+        assert_eq!(raw_download.data, b"raw payload");
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@
 pub mod convert;
 pub mod flash;
 pub mod inspect;
+pub mod raw;
 pub mod scan;
 pub mod types;
 pub mod unpack;
