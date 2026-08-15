@@ -2,6 +2,7 @@
 //!
 //! Provides CLI command implementations for scanning devices and flashing firmware
 
+pub mod convert;
 pub mod flash;
 pub mod inspect;
 pub mod scan;

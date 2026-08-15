@@ -17,6 +17,7 @@ use clap::Parser;
 /// CLI structure parsed from command line arguments
 use openixcli::cli::{Cli, Commands, UsbBackendArg};
 use openixcli::commands::{self, parse_partition_list, FlashArgs};
+use openixcli::convert::ConvertOptions;
 use openixcli::tui;
 use openixcli::utils::TermLogger;
 
@@ -106,6 +107,29 @@ async fn main() -> anyhow::Result<()> {
             commands::unpack::execute(commands::UnpackArgs {
                 firmware_path: firmware.into(),
                 output: output.map(std::path::PathBuf::from),
+            })
+            .await?;
+        }
+        Some(Commands::Convert {
+            firmware,
+            output,
+            target,
+            logic_offset,
+            uboot_start,
+            nor_size,
+            storage_size,
+            secure,
+        }) => {
+            setup_logging(cli.verbose);
+            commands::convert::execute(ConvertOptions {
+                firmware_path: firmware.into(),
+                output: output.map(std::path::PathBuf::from),
+                target,
+                logic_offset,
+                uboot_start,
+                nor_size,
+                storage_size,
+                secure,
             })
             .await?;
         }

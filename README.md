@@ -19,6 +19,7 @@ OpenixCLI is a powerful and user-friendly CLI tool designed for flashing firmwar
 - **Verification**: Optional write verification for data integrity
 - **Progress Tracking**: Visual progress indicators during flash operations
 - **Partition Selection**: Flash specific partitions or entire firmware
+- **Firmware Conversion**: Convert IMAGEWTY packages to raw SPI NOR, SD card, eMMC, SD NAND, or UFS programmer images
 - **Verbose Logging**: Detailed debug output for troubleshooting
 
 ## Installation
@@ -105,6 +106,36 @@ Flash and power off after completion:
 ```bash
 openixcli flash firmware.img --post-action poweroff
 ```
+
+### Convert Firmware
+
+Convert an IMAGEWTY firmware package to a raw programmer image. The command reads the embedded
+partition configuration, expands Android sparse partitions, detects secure firmware, and uses the
+DTB flash map when available.
+
+```bash
+openixcli convert firmware.img
+```
+
+The default target is eMMC and the default output is `firmware_programmer.bin`. Select another
+storage layout or output path with `--target` and `--output`:
+
+```bash
+openixcli convert firmware.img --target ufs --output firmware-ufs.img
+openixcli convert firmware.img --target spinor --nor-size 32
+```
+
+#### Convert Options
+
+| Option | Description |
+|--------|-------------|
+| `--output`, `-o` | Output path (defaults to `*_programmer.bin`, or `*_full_img.bin` for SPI NOR) |
+| `--target`, `-t` | `spinor`, `sdcard`, `emmc`, `sdnand`, or `ufs` (default: `emmc`) |
+| `--logic-offset` | Override the DTB/default logical offset, in 512-byte sectors |
+| `--uboot-start` | Override the SPI NOR U-Boot offset, in 512-byte sectors |
+| `--nor-size` | SPI NOR capacity in MiB (default: 16) |
+| `--storage-size` | GPT target size such as `8GB` or `512MB` (default: `auto`) |
+| `--secure` | `auto`, `enabled`, or `disabled` (default: `auto`) |
 
 ## Flash Modes
 

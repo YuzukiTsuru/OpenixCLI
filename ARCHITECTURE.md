@@ -15,7 +15,8 @@ The flash flow is:
 
 ## Module Responsibilities
 
-- `commands`: CLI command adapters. They parse input, load firmware, build `FlashRequest`, and delegate to `flash`.
+- `commands`: CLI command adapters. They parse input and delegate flashing, inspection, unpacking, and raw-image conversion to their domain modules.
+- `convert`: Raw programmer-image assembly for SPI NOR and block storage, including DTB offset detection, sparse expansion, and GPT adjustment.
 - `tui`: Interactive terminal frontend. It loads firmware for display, starts flash tasks, and consumes flash events.
 - `firmware`: IMAGEWTY file parsing and firmware metadata loading.
 - `config`: Allwinner config, MBR, boot header, and partition config parsers.

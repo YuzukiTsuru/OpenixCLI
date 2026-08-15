@@ -4,6 +4,7 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+pub use crate::convert::{ConvertTarget, SecureMode};
 use crate::flash::{FlashMode, PostAction};
 
 /// Main CLI structure
@@ -128,6 +129,41 @@ pub enum Commands {
         output: Option<String>,
     },
 
+    /// Convert an IMAGEWTY firmware package to a raw programmer image
+    Convert {
+        /// Path to the IMAGEWTY firmware file
+        #[arg(help = "Path to firmware file")]
+        firmware: String,
+
+        /// Output image path (default depends on target)
+        #[arg(short, long, help = "Output raw image path")]
+        output: Option<String>,
+
+        /// Target storage layout
+        #[arg(short, long, value_enum, default_value_t = ConvertTarget::Emmc)]
+        target: ConvertTarget,
+
+        /// Logical partition offset in 512-byte sectors (auto-detected when omitted)
+        #[arg(long)]
+        logic_offset: Option<u64>,
+
+        /// U-Boot offset in 512-byte sectors for SPI NOR (auto-detected when omitted)
+        #[arg(long)]
+        uboot_start: Option<u64>,
+
+        /// SPI NOR capacity in MiB
+        #[arg(long, default_value_t = 16)]
+        nor_size: u64,
+
+        /// GPT target storage size, for example auto, 8GB, or 512MB
+        #[arg(long, default_value = "auto")]
+        storage_size: String,
+
+        /// Secure boot component mode
+        #[arg(long, value_enum, default_value_t = SecureMode::Auto)]
+        secure: SecureMode,
+    },
+
     /// Launch interactive TUI mode
     Tui,
 }
@@ -170,6 +206,58 @@ mod tests {
             unpack.command,
             Some(Commands::Unpack { firmware, output: Some(output) })
                 if firmware == "firmware.fex" && output == "out"
+        ));
+    }
+
+    #[test]
+    fn parses_convert_defaults_and_explicit_options() {
+        let defaults = Cli::try_parse_from(["openixcli", "convert", "firmware.img"]).unwrap();
+        assert!(matches!(
+            defaults.command,
+            Some(Commands::Convert {
+                firmware,
+                output: None,
+                target: ConvertTarget::Emmc,
+                logic_offset: None,
+                uboot_start: None,
+                nor_size: 16,
+                storage_size,
+                secure: SecureMode::Auto,
+            }) if firmware == "firmware.img" && storage_size == "auto"
+        ));
+
+        let explicit = Cli::try_parse_from([
+            "openixcli",
+            "convert",
+            "firmware.img",
+            "--output",
+            "raw.img",
+            "--target",
+            "spinor",
+            "--logic-offset",
+            "2048",
+            "--uboot-start",
+            "64",
+            "--nor-size",
+            "32",
+            "--storage-size",
+            "8GB",
+            "--secure",
+            "enabled",
+        ])
+        .unwrap();
+        assert!(matches!(
+            explicit.command,
+            Some(Commands::Convert {
+                firmware,
+                output: Some(output),
+                target: ConvertTarget::Spinor,
+                logic_offset: Some(2048),
+                uboot_start: Some(64),
+                nor_size: 32,
+                storage_size,
+                secure: SecureMode::Enabled,
+            }) if firmware == "firmware.img" && output == "raw.img" && storage_size == "8GB"
         ));
     }
 

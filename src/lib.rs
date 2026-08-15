@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod convert;
 pub mod firmware;
 pub mod flash;
 pub mod process;
