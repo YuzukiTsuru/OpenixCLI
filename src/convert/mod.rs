@@ -413,7 +413,7 @@ mod tests {
             },
             FirmwareEntry {
                 filename: "boot_package.fex",
-                maintype: "BOOTPKG",
+                maintype: "12345678",
                 subtype: "BOOTPKG-NOR00000",
                 data: &[0xa0, 0xa1],
             },

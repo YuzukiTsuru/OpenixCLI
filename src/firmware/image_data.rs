@@ -58,6 +58,11 @@ pub const IMAGE_DATA_TABLE: &[ImageDataEntry] = &[
         subtype: "DTB_CONFIG000000",
     },
     ImageDataEntry {
+        name: "boot0_nand",
+        maintype: "BOOT",
+        subtype: "BOOT0_0000000000",
+    },
+    ImageDataEntry {
         name: "boot0_card",
         maintype: "12345678",
         subtype: "1234567890BOOT_0",
@@ -69,12 +74,12 @@ pub const IMAGE_DATA_TABLE: &[ImageDataEntry] = &[
     },
     ImageDataEntry {
         name: "bootpkg",
-        maintype: "BOOTPKG",
+        maintype: "12345678",
         subtype: "BOOTPKG-00000000",
     },
     ImageDataEntry {
         name: "bootpkg_nor",
-        maintype: "BOOTPKG",
+        maintype: "12345678",
         subtype: "BOOTPKG-NOR00000",
     },
 ];
@@ -96,6 +101,7 @@ pub fn get_image_data_entry(name: &str) -> Option<&'static ImageDataEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::image_cfg_entries;
 
     #[test]
     fn every_declared_image_entry_is_lookupable() {
@@ -107,5 +113,37 @@ mod tests {
         }
         assert!(get_image_data_entry("unknown").is_none());
         assert!(get_image_data_entry("").is_none());
+    }
+
+    #[test]
+    fn predefined_entries_match_the_real_image_cfg_filelist() {
+        let config_entries = image_cfg_entries();
+        assert_eq!(config_entries.len(), 28);
+
+        let mappings = [
+            ("fes", "fes1.fex"),
+            ("uboot", "u-boot-efex.fex"),
+            ("uboot_crash", "u-boot-crash.fex"),
+            ("mbr", "sunxi_mbr.fex"),
+            ("gpt", "sunxi_gpt.fex"),
+            ("sys_config", "sys_config.fex"),
+            ("sys_config_bin", "config.fex"),
+            ("sys_partition", "sys_partition.fex"),
+            ("board_config", "board.fex"),
+            ("dtb", "sunxi.fex"),
+            ("boot0_nand", "boot0_nand.fex"),
+            ("boot0_card", "boot0_sdcard.fex"),
+            ("bootpkg", "boot_package.fex"),
+        ];
+
+        for (name, filename) in mappings {
+            let expected = config_entries
+                .iter()
+                .find(|entry| entry.filename == filename)
+                .unwrap_or_else(|| panic!("{filename} missing from image.cfg"));
+            let actual = get_image_data_entry(name).unwrap();
+            assert_eq!(actual.maintype, expected.maintype, "{filename} maintype");
+            assert_eq!(actual.subtype, expected.subtype, "{filename} subtype");
+        }
     }
 }

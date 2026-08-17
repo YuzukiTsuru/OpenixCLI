@@ -129,24 +129,30 @@ impl<'a> BootDownload<'a> {
         secure: u32,
         storage_type: u32,
     ) -> FlashResult<()> {
-        if let Some(subtype) = self.get_boot0_subtype(secure, storage_type) {
+        if let Some((maintype, subtype)) = self.get_boot0_entry(secure, storage_type) {
             self.logger
-                .debug(&format!("Looking for Boot0: {}", subtype));
+                .debug(&format!("Looking for Boot0: {maintype}/{subtype}"));
 
-            let boot0_data = packer.find_file_data_by_subtype(subtype).or_else(|_| {
-                self.get_boot0_fallback_subtype(secure)
-                    .filter(|fallback| *fallback != subtype)
-                    .map_or_else(
-                        || Err(PackerError::FileNotFound(subtype.to_string())),
-                        |fallback| packer.find_file_data_by_subtype(fallback),
-                    )
-            });
+            let boot0_data = packer
+                .get_file_data_by_maintype_subtype(maintype, subtype)
+                .or_else(|_| {
+                    self.get_boot0_fallback_entry(secure)
+                        .filter(|fallback| *fallback != (maintype, subtype))
+                        .map_or_else(
+                            || Err(PackerError::FileNotFound(format!("{maintype}/{subtype}"))),
+                            |(fallback_maintype, fallback_subtype)| {
+                                packer.get_file_data_by_maintype_subtype(
+                                    fallback_maintype,
+                                    fallback_subtype,
+                                )
+                            },
+                        )
+                });
 
             match boot0_data {
                 Ok(boot0_data) => {
                     self.logger.info(&format!(
-                        "Downloading Boot0: {} ({} bytes)",
-                        subtype,
+                        "Downloading Boot0: {maintype}/{subtype} ({} bytes)",
                         boot0_data.len()
                     ));
 
@@ -157,7 +163,7 @@ impl<'a> BootDownload<'a> {
                 }
                 Err(e) => {
                     self.logger
-                        .debug(&format!("Boot0 not found: {} - {}", subtype, e));
+                        .debug(&format!("Boot0 not found: {maintype}/{subtype} - {e}"));
                     return Err(FlashError::Boot0NotFound);
                 }
             }
@@ -201,43 +207,47 @@ impl<'a> BootDownload<'a> {
             BOOT_FILE_MODE_TOC => Some(("12345678", "TOC1_00000000000")),
             BOOT_FILE_MODE_PKG => {
                 if StorageType::from(storage_type) == StorageType::Spinor {
-                    Some(("BOOTPKG", "BOOTPKG-NOR00000"))
+                    Some(("12345678", "BOOTPKG-NOR00000"))
                 } else {
-                    Some(("BOOTPKG", "BOOTPKG-00000000"))
+                    Some(("12345678", "BOOTPKG-00000000"))
                 }
             }
             _ => None,
         }
     }
 
-    /// Get Boot0 subtype based on boot mode and storage type
-    fn get_boot0_subtype(&self, secure: u32, storage_type: u32) -> Option<&'static str> {
+    /// Get the Boot0 entry based on boot mode and storage type.
+    fn get_boot0_entry(
+        &self,
+        secure: u32,
+        storage_type: u32,
+    ) -> Option<(&'static str, &'static str)> {
         if secure == BOOT_FILE_MODE_NORMAL || secure == BOOT_FILE_MODE_PKG {
             match StorageType::from(storage_type) {
-                StorageType::Nand | StorageType::Spinand => Some("BOOT0_0000000000"),
+                StorageType::Nand | StorageType::Spinand => Some(("BOOT", "BOOT0_0000000000")),
                 StorageType::Sdcard
                 | StorageType::Emmc
                 | StorageType::Emmc3
-                | StorageType::Emmc0 => Some("1234567890BOOT_0"),
-                StorageType::Spinor => Some("1234567890BNOR_0"),
-                StorageType::Ufs => Some("1234567890BUFS_0"),
-                _ => Some("1234567890BOOT_0"),
+                | StorageType::Emmc0 => Some(("12345678", "1234567890BOOT_0")),
+                StorageType::Spinor => Some(("12345678", "1234567890BNOR_0")),
+                StorageType::Ufs => Some(("12345678", "1234567890BUFS_0")),
+                _ => Some(("12345678", "1234567890BOOT_0")),
             }
         } else {
             match StorageType::from(storage_type) {
-                StorageType::Sdcard | StorageType::Sd1 => Some("TOC0_SDCARD00000"),
-                StorageType::Nand | StorageType::Spinand => Some("TOC0_NAND0000000"),
-                StorageType::Spinor => Some("TOC0_SPINOR00000"),
-                StorageType::Ufs => Some("TOC0_UFS00000000"),
-                _ => Some("TOC0_00000000000"),
+                StorageType::Sdcard | StorageType::Sd1 => Some(("12345678", "TOC0_SDCARD00000")),
+                StorageType::Nand | StorageType::Spinand => Some(("12345678", "TOC0_NAND0000000")),
+                StorageType::Spinor => Some(("12345678", "TOC0_SPINOR00000")),
+                StorageType::Ufs => Some(("12345678", "TOC0_UFS00000000")),
+                _ => Some(("12345678", "TOC0_00000000000")),
             }
         }
     }
 
-    fn get_boot0_fallback_subtype(&self, secure: u32) -> Option<&'static str> {
+    fn get_boot0_fallback_entry(&self, secure: u32) -> Option<(&'static str, &'static str)> {
         match secure {
-            BOOT_FILE_MODE_NORMAL | BOOT_FILE_MODE_PKG => Some("1234567890BOOT_0"),
-            BOOT_FILE_MODE_TOC => Some("TOC0_00000000000"),
+            BOOT_FILE_MODE_NORMAL | BOOT_FILE_MODE_PKG => Some(("12345678", "1234567890BOOT_0")),
+            BOOT_FILE_MODE_TOC => Some(("12345678", "TOC0_00000000000")),
             _ => None,
         }
     }
@@ -247,7 +257,7 @@ impl<'a> BootDownload<'a> {
 mod tests {
     use super::*;
     use crate::flash::protocol::tests::MockProtocol;
-    use crate::test_support::{test_firmware, FirmwareEntry};
+    use crate::test_support::{image_cfg_entries, test_firmware, FirmwareEntry};
 
     #[test]
     fn selects_preboot_item_for_each_supported_boot_mode() {
@@ -288,55 +298,55 @@ mod tests {
         );
         assert_eq!(
             downloader.get_boot1_subtype(BOOT_FILE_MODE_PKG, StorageType::Spinor as u32),
-            Some(("BOOTPKG", "BOOTPKG-NOR00000"))
+            Some(("12345678", "BOOTPKG-NOR00000"))
         );
         assert_eq!(
             downloader.get_boot1_subtype(BOOT_FILE_MODE_PKG, StorageType::Ufs as u32),
-            Some(("BOOTPKG", "BOOTPKG-00000000"))
+            Some(("12345678", "BOOTPKG-00000000"))
         );
         assert_eq!(downloader.get_boot1_subtype(u32::MAX, 0), None);
 
         let normal_cases = [
-            (StorageType::Nand, "BOOT0_0000000000"),
-            (StorageType::Spinand, "BOOT0_0000000000"),
-            (StorageType::Sdcard, "1234567890BOOT_0"),
-            (StorageType::Emmc, "1234567890BOOT_0"),
-            (StorageType::Emmc3, "1234567890BOOT_0"),
-            (StorageType::Emmc0, "1234567890BOOT_0"),
-            (StorageType::Spinor, "1234567890BNOR_0"),
-            (StorageType::Ufs, "1234567890BUFS_0"),
-            (StorageType::Auto, "1234567890BOOT_0"),
+            (StorageType::Nand, ("BOOT", "BOOT0_0000000000")),
+            (StorageType::Spinand, ("BOOT", "BOOT0_0000000000")),
+            (StorageType::Sdcard, ("12345678", "1234567890BOOT_0")),
+            (StorageType::Emmc, ("12345678", "1234567890BOOT_0")),
+            (StorageType::Emmc3, ("12345678", "1234567890BOOT_0")),
+            (StorageType::Emmc0, ("12345678", "1234567890BOOT_0")),
+            (StorageType::Spinor, ("12345678", "1234567890BNOR_0")),
+            (StorageType::Ufs, ("12345678", "1234567890BUFS_0")),
+            (StorageType::Auto, ("12345678", "1234567890BOOT_0")),
         ];
         for (storage, expected) in normal_cases {
             assert_eq!(
-                downloader.get_boot0_subtype(BOOT_FILE_MODE_NORMAL, storage as u32),
+                downloader.get_boot0_entry(BOOT_FILE_MODE_NORMAL, storage as u32),
                 Some(expected)
             );
         }
         let toc_cases = [
-            (StorageType::Sdcard, "TOC0_SDCARD00000"),
-            (StorageType::Sd1, "TOC0_SDCARD00000"),
-            (StorageType::Nand, "TOC0_NAND0000000"),
-            (StorageType::Spinand, "TOC0_NAND0000000"),
-            (StorageType::Spinor, "TOC0_SPINOR00000"),
-            (StorageType::Ufs, "TOC0_UFS00000000"),
-            (StorageType::Auto, "TOC0_00000000000"),
+            (StorageType::Sdcard, ("12345678", "TOC0_SDCARD00000")),
+            (StorageType::Sd1, ("12345678", "TOC0_SDCARD00000")),
+            (StorageType::Nand, ("12345678", "TOC0_NAND0000000")),
+            (StorageType::Spinand, ("12345678", "TOC0_NAND0000000")),
+            (StorageType::Spinor, ("12345678", "TOC0_SPINOR00000")),
+            (StorageType::Ufs, ("12345678", "TOC0_UFS00000000")),
+            (StorageType::Auto, ("12345678", "TOC0_00000000000")),
         ];
         for (storage, expected) in toc_cases {
             assert_eq!(
-                downloader.get_boot0_subtype(BOOT_FILE_MODE_TOC, storage as u32),
+                downloader.get_boot0_entry(BOOT_FILE_MODE_TOC, storage as u32),
                 Some(expected)
             );
         }
         assert_eq!(
-            downloader.get_boot0_fallback_subtype(BOOT_FILE_MODE_NORMAL),
-            Some("1234567890BOOT_0")
+            downloader.get_boot0_fallback_entry(BOOT_FILE_MODE_NORMAL),
+            Some(("12345678", "1234567890BOOT_0"))
         );
         assert_eq!(
-            downloader.get_boot0_fallback_subtype(BOOT_FILE_MODE_TOC),
-            Some("TOC0_00000000000")
+            downloader.get_boot0_fallback_entry(BOOT_FILE_MODE_TOC),
+            Some(("12345678", "TOC0_00000000000"))
         );
-        assert_eq!(downloader.get_boot0_fallback_subtype(u32::MAX), None);
+        assert_eq!(downloader.get_boot0_fallback_entry(u32::MAX), None);
     }
 
     #[tokio::test]
@@ -428,18 +438,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn package_mode_uses_bootpkg_maintype() {
+    async fn package_mode_uses_the_boot_package_mapping_from_image_cfg() {
+        let config = image_cfg_entries();
+        let bootpkg = config
+            .iter()
+            .find(|entry| entry.filename == "boot_package.fex")
+            .unwrap();
+        let boot0 = config
+            .iter()
+            .find(|entry| entry.filename == "boot0_sdcard.fex")
+            .unwrap();
         let firmware = test_firmware(&[
             FirmwareEntry {
-                filename: "boot-package.fex",
-                maintype: "BOOTPKG",
-                subtype: "BOOTPKG-00000000",
+                filename: &bootpkg.filename,
+                maintype: &bootpkg.maintype,
+                subtype: &bootpkg.subtype,
                 data: b"boot1",
             },
             FirmwareEntry {
-                filename: "boot0.fex",
-                maintype: "12345678",
-                subtype: "1234567890BOOT_0",
+                filename: &boot0.filename,
+                maintype: &boot0.maintype,
+                subtype: &boot0.subtype,
                 data: b"boot0",
             },
         ]);
@@ -457,6 +476,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ctx.downloads.borrow()[0].data_type, FesDataType::Boot1);
+    }
+
+    #[tokio::test]
+    async fn nand_mode_accepts_the_boot_maintype_from_image_cfg() {
+        let config = image_cfg_entries();
+        let uboot = config
+            .iter()
+            .find(|entry| entry.filename == "u-boot-efex.fex")
+            .unwrap();
+        let boot0 = config
+            .iter()
+            .find(|entry| entry.filename == "boot0_nand.fex")
+            .unwrap();
+        assert_eq!(boot0.maintype, "BOOT");
+
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: &uboot.filename,
+                maintype: &uboot.maintype,
+                subtype: &uboot.subtype,
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: &boot0.filename,
+                maintype: &boot0.maintype,
+                subtype: &boot0.subtype,
+                data: b"nand boot0",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+
+        BootDownload::new(&logger)
+            .execute(
+                &ctx,
+                &mut packer,
+                BOOT_FILE_MODE_NORMAL,
+                StorageType::Nand as u32,
+            )
+            .await
+            .unwrap();
+
+        let downloads = ctx.downloads.borrow();
+        assert_eq!(downloads.len(), 2);
+        assert_eq!(downloads[1].data_type, FesDataType::Boot0);
+        assert_eq!(downloads[1].data, b"nand boot0");
     }
 
     #[tokio::test]

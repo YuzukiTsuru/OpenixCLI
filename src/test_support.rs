@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,6 +59,87 @@ pub(crate) struct FirmwareEntry<'a> {
     pub(crate) maintype: &'a str,
     pub(crate) subtype: &'a str,
     pub(crate) data: &'a [u8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImageCfgEntry {
+    pub(crate) filename: String,
+    pub(crate) maintype: String,
+    pub(crate) subtype: String,
+}
+
+pub(crate) fn image_cfg_entries() -> Vec<ImageCfgEntry> {
+    let content = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/files/image.cfg"
+    ));
+    let mut section = "";
+    let mut main_types = HashMap::new();
+    let mut entries = Vec::new();
+
+    for source_line in content.lines() {
+        let line = source_line.trim();
+        if line.is_empty() || line.starts_with(';') || line.starts_with("//") {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = &line[1..line.len() - 1];
+            continue;
+        }
+
+        match section {
+            "MAIN_TYPE" => {
+                let (name, value) = cfg_assignment(line);
+                main_types.insert(name.to_string(), cfg_string(value).trim_end().to_string());
+            }
+            "FILELIST" => {
+                let record = line
+                    .strip_prefix('{')
+                    .and_then(|line| line.strip_suffix(','))
+                    .and_then(|line| line.strip_suffix('}'))
+                    .expect("invalid FILELIST record");
+                let fields: HashMap<_, _> = record
+                    .split(',')
+                    .filter(|field| !field.trim().is_empty())
+                    .map(|field| {
+                        let (key, value) = cfg_assignment(field);
+                        (key.to_string(), value.to_string())
+                    })
+                    .collect();
+                let maintype_value = fields.get("maintype").expect("missing maintype");
+                let maintype = if maintype_value.starts_with('"') {
+                    cfg_string(maintype_value).trim_end().to_string()
+                } else {
+                    main_types
+                        .get(maintype_value)
+                        .unwrap_or_else(|| panic!("unknown maintype alias: {maintype_value}"))
+                        .clone()
+                };
+                entries.push(ImageCfgEntry {
+                    filename: cfg_string(fields.get("filename").expect("missing filename")),
+                    maintype,
+                    subtype: cfg_string(fields.get("subtype").expect("missing subtype")),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    entries
+}
+
+fn cfg_assignment(line: &str) -> (&str, &str) {
+    let (key, value) = line.split_once('=').expect("invalid image.cfg assignment");
+    (key.trim(), value.trim())
+}
+
+fn cfg_string(value: &str) -> String {
+    value
+        .trim()
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .expect("expected quoted image.cfg string")
+        .replace("\\\\", "\\")
 }
 
 pub(crate) fn temp_file(label: &str, data: &[u8]) -> TestFile {
