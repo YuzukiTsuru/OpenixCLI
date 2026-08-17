@@ -93,11 +93,30 @@ impl<'a> BootDownload<'a> {
         if let Some((maintype, subtype)) = self.get_boot1_subtype(secure, storage_type) {
             self.logger
                 .debug(&format!("Looking for Boot1: {}/{}", maintype, subtype));
-            match packer.get_file_data_by_maintype_subtype(maintype, subtype) {
+            let mut used_maintype = maintype;
+            let boot1_data = match packer.get_file_data_by_maintype_subtype(maintype, subtype) {
+                Ok(data) => Ok(data),
+                Err(primary_err) => match self
+                    .get_boot1_fallback_maintype(secure)
+                    .filter(|fallback| *fallback != maintype)
+                {
+                    Some(fallback) => {
+                        self.logger.debug(&format!(
+                            "Boot1 not found as {}/{} ({}), retrying as {}/{}",
+                            maintype, subtype, primary_err, fallback, subtype
+                        ));
+                        used_maintype = fallback;
+                        packer.get_file_data_by_maintype_subtype(fallback, subtype)
+                    }
+                    None => Err(primary_err),
+                },
+            };
+
+            match boot1_data {
                 Ok(boot1_data) => {
                     self.logger.info(&format!(
                         "Downloading Boot1: {}/{} ({} bytes)",
-                        maintype,
+                        used_maintype,
                         subtype,
                         boot1_data.len()
                     ));
@@ -231,6 +250,18 @@ impl<'a> BootDownload<'a> {
                 StorageType::Ufs => Some("TOC0_UFS00000000"),
                 _ => Some("TOC0_00000000000"),
             }
+        }
+    }
+
+    /// Legacy maintype for the Boot1 package.
+    ///
+    /// Images produced by the stock Allwinner packer store `boot_package.fex`
+    /// under maintype `12345678` while using the same `BOOTPKG-*` subtype.
+    /// Mirrors `get_boot0_fallback_subtype`.
+    fn get_boot1_fallback_maintype(&self, secure: u32) -> Option<&'static str> {
+        match secure {
+            BOOT_FILE_MODE_PKG => Some("12345678"),
+            _ => None,
         }
     }
 
@@ -457,6 +488,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ctx.downloads.borrow()[0].data_type, FesDataType::Boot1);
+    }
+
+    #[tokio::test]
+    async fn package_mode_falls_back_to_legacy_maintype() {
+        // Stock Allwinner packer output: boot_package.fex carries maintype
+        // "12345678", not "BOOTPKG". The subtype is the same either way.
+        let firmware = test_firmware(&[
+            FirmwareEntry {
+                filename: "boot_package.fex",
+                maintype: "12345678",
+                subtype: "BOOTPKG-00000000",
+                data: b"boot1",
+            },
+            FirmwareEntry {
+                filename: "boot0.fex",
+                maintype: "12345678",
+                subtype: "1234567890BOOT_0",
+                data: b"boot0",
+            },
+        ]);
+        let mut packer = OpenixPacker::new();
+        packer.load(firmware.path()).unwrap();
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let ctx = MockProtocol::default();
+        BootDownload::new(&logger)
+            .execute(
+                &ctx,
+                &mut packer,
+                BOOT_FILE_MODE_PKG,
+                StorageType::Emmc as u32,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ctx.downloads.borrow()[0].data_type, FesDataType::Boot1);
+        assert_eq!(ctx.downloads.borrow()[0].data, b"boot1");
+    }
+
+    #[tokio::test]
+    async fn boot1_fallback_maintype_only_applies_to_package_mode() {
+        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let downloader = BootDownload::new(&logger);
+        assert_eq!(
+            downloader.get_boot1_fallback_maintype(BOOT_FILE_MODE_PKG),
+            Some("12345678")
+        );
+        assert_eq!(
+            downloader.get_boot1_fallback_maintype(BOOT_FILE_MODE_NORMAL),
+            None
+        );
+        assert_eq!(
+            downloader.get_boot1_fallback_maintype(BOOT_FILE_MODE_TOC),
+            None
+        );
     }
 
     #[tokio::test]
