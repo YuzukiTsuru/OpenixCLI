@@ -1,4 +1,5 @@
-//! Raw disk image flash command.
+//! Flash command that boots the device through a private IMAGEWTY firmware and writes a standard
+//! firmware image into storage block by block, analogous to a `dd` operation.
 
 use crate::flash::Flasher;
 use crate::raw::{self, RawOptions};

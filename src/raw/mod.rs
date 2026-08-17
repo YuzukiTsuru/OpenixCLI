@@ -1,4 +1,7 @@
-//! Raw disk image flashing support.
+//! Standalone raw-image flashing.
+//!
+//! The device boots from a private IMAGEWTY firmware, which is then used to write a standard
+//! firmware image directly into the target storage, block by block — analogous to a `dd` operation.
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

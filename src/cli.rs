@@ -165,14 +165,14 @@ pub enum Commands {
         secure: SecureMode,
     },
 
-    /// Flash a raw disk image using an IMAGEWTY boot firmware
+    /// Boot from a private IMAGEWTY firmware and flash a standard firmware image into storage, block by block (like dd)
     Raw {
-        /// Path to the IMAGEWTY boot firmware
+        /// Path to the private IMAGEWTY boot firmware
         #[arg(help = "Path to boot firmware file")]
         firmware: String,
 
-        /// Path to the raw disk image
-        #[arg(help = "Path to raw image file")]
+        /// Path to the standard firmware image (raw disk image) to write into storage
+        #[arg(help = "Path to the standard firmware image (raw disk image)")]
         image: String,
 
         /// Raw flashing mode
