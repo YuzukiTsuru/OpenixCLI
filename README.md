@@ -113,7 +113,7 @@ openixcli flash firmware.img --post-action poweroff
 Flash a standalone raw disk image by using an IMAGEWTY firmware package as the boot firmware. The
 boot firmware supplies FES, U-Boot, Boot0/Boot1, and related board configuration; its normal
 partition images are not written. OpenixCLI creates a temporary Sunxi MBR containing one `raw`
-partition and streams the external image to that partition in 10 MiB windows.
+partition for download the full storage.
 
 > **Warning:** The `raw` command always performs a full erase, disables download verification, and
 > reboots the board after flashing. All existing data on the target storage will be destroyed.
