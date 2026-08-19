@@ -16,6 +16,7 @@ use thiserror::Error;
 /// * `DeviceOpenFailed` - Failed to open device
 /// * `DramInitFailed` - DRAM initialization failed
 /// * `UbootDownloadFailed` - U-Boot download failed
+/// * `UbootStartupTimeout` - U-Boot did not initialize its FES USB device
 /// * `MbrDownloadFailed` - MBR download failed
 /// * `PartitionDownloadFailed` - Partition download failed
 /// * `ReconnectFailed` - Device reconnect failed
@@ -55,6 +56,9 @@ pub enum FlashError {
 
     #[error("U-Boot download failed")]
     UbootDownloadFailed,
+
+    #[error("U-Boot startup timed out after {seconds}s: the FES USB device was not initialized")]
+    UbootStartupTimeout { seconds: u64 },
 
     #[error("MBR download failed")]
     MbrDownloadFailed,

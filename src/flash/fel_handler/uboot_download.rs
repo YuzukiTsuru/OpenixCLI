@@ -103,7 +103,8 @@ impl<'a> UbootDownload<'a> {
         ctx.fel_exec(run_addr)
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-        self.logger.info("U-Boot downloaded and executed");
+        // FEL only acknowledges the jump command; readiness is confirmed by the later FES reconnect.
+        self.logger.info("U-Boot execution requested");
         Ok(())
     }
 
@@ -186,7 +187,8 @@ impl<'a> UbootDownload<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flash::protocol::tests::MockProtocol;
+    use crate::flash::{protocol::tests::MockProtocol, FlashEvent, FlashEventSink};
+    use std::sync::{Arc, Mutex};
 
     fn uboot_image(run_addr: u32) -> Vec<u8> {
         let mut data = vec![0u8; std::mem::size_of::<UBootHeader>()];
@@ -198,7 +200,12 @@ mod tests {
 
     #[tokio::test]
     async fn execute_places_all_components_in_non_overlapping_slots() {
-        let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let logger = Logger::for_events(
+            false,
+            FlashEventSink::from_fn(move |event| captured.lock().unwrap().push(event)),
+        );
         let handler = UbootDownload::new(&logger);
         let ctx = MockProtocol::default();
         let run_addr = 0x4000_0000;
@@ -230,6 +237,10 @@ mod tests {
         let mode = uploaded.uboot_data.work_mode;
         assert_eq!(mode, WORK_MODE_USB_PRODUCT as i32);
         assert_eq!(&*ctx.fel_execs.borrow(), &[run_addr]);
+        assert!(events.lock().unwrap().iter().any(|event| matches!(
+            event,
+            FlashEvent::Log { message, .. } if message == "U-Boot execution requested"
+        )));
     }
 
     #[tokio::test]

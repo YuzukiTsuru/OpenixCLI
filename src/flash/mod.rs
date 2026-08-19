@@ -79,7 +79,7 @@ impl DeviceBackend for LibefexDeviceBackend {
 struct ReconnectPolicy {
     initial_delay: tokio::time::Duration,
     retry_delay: tokio::time::Duration,
-    max_retries: usize,
+    startup_timeout: tokio::time::Duration,
 }
 
 impl Default for ReconnectPolicy {
@@ -87,7 +87,7 @@ impl Default for ReconnectPolicy {
         Self {
             initial_delay: tokio::time::Duration::from_secs(2),
             retry_delay: tokio::time::Duration::from_secs(1),
-            max_retries: 25,
+            startup_timeout: tokio::time::Duration::from_secs(45),
         }
     }
 }
@@ -132,8 +132,8 @@ impl<B: DeviceBackend> Flasher<B> {
             backend,
             reconnect_policy: ReconnectPolicy {
                 initial_delay: tokio::time::Duration::ZERO,
-                retry_delay: tokio::time::Duration::ZERO,
-                max_retries: 3,
+                retry_delay: tokio::time::Duration::from_millis(1),
+                startup_timeout: tokio::time::Duration::from_millis(100),
             },
         }
     }
@@ -239,7 +239,7 @@ impl<B: DeviceBackend> Flasher<B> {
             .await?;
 
         self.logger
-            .info(&format!("U-Boot downloaded ({} bytes)", uboot_data.len()));
+            .info(&format!("U-Boot transferred ({} bytes)", uboot_data.len()));
         self.logger.complete_stage();
 
         self.logger.begin_stage(StageType::FelReconnect);
@@ -271,25 +271,41 @@ impl<B: DeviceBackend> Flasher<B> {
 
     /// Reconnect to device after FEL mode operations
     async fn reconnect_device(&self) -> FlashResult<B::Context> {
-        tokio::time::sleep(self.reconnect_policy.initial_delay).await;
+        let timeout = self.reconnect_policy.startup_timeout;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let timeout_seconds = timeout.as_secs();
 
-        let mut retries = 0;
+        self.logger.info(&format!(
+            "Waiting up to {timeout_seconds}s for U-Boot to initialize the FES USB device..."
+        ));
 
-        while retries < self.reconnect_policy.max_retries {
-            tokio::time::sleep(self.reconnect_policy.retry_delay).await;
+        if tokio::time::timeout_at(
+            deadline,
+            tokio::time::sleep(self.reconnect_policy.initial_delay),
+        )
+        .await
+        .is_err()
+        {
+            return Err(FlashError::UbootStartupTimeout {
+                seconds: timeout_seconds,
+            });
+        }
+
+        let mut attempts = 0;
+
+        loop {
+            attempts += 1;
 
             let devices = match self.backend.scan_devices() {
                 Ok(d) => d,
                 Err(_) => {
-                    retries += 1;
-                    self.logger.debug(&format!(
-                        "Reconnect attempt {}/{} (scan failed)",
-                        retries, self.reconnect_policy.max_retries
-                    ));
-                    continue;
+                    self.logger
+                        .debug(&format!("Reconnect attempt {attempts} (scan failed)"));
+                    Vec::new()
                 }
             };
 
+            let found_devices = !devices.is_empty();
             for dev in devices {
                 let Ok(new_ctx) = self.backend.open_device(dev) else {
                     continue;
@@ -304,14 +320,30 @@ impl<B: DeviceBackend> Flasher<B> {
                 }
             }
 
-            retries += 1;
-            self.logger.debug(&format!(
-                "Reconnect attempt {}/{}",
-                retries, self.reconnect_policy.max_retries
-            ));
+            if found_devices {
+                self.logger.debug(&format!(
+                    "Reconnect attempt {attempts} (FES device not ready)"
+                ));
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+
+            if tokio::time::timeout_at(
+                deadline,
+                tokio::time::sleep(self.reconnect_policy.retry_delay),
+            )
+            .await
+            .is_err()
+            {
+                break;
+            }
         }
 
-        Err(FlashError::ReconnectFailed)
+        Err(FlashError::UbootStartupTimeout {
+            seconds: timeout_seconds,
+        })
     }
 
     /// Set device mode after flashing
@@ -333,7 +365,7 @@ mod tests {
     use crate::flash::protocol::tests::MockProtocol;
     use crate::test_support::{mbr_bytes, test_firmware, FirmwareEntry};
     use libefex::{DeviceMode, FesDataType, FesToolMode};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::rc::Rc;
     use std::sync::{Arc, Mutex};
@@ -343,6 +375,7 @@ mod tests {
         scans: RefCell<VecDeque<Result<Vec<DeviceLocation>, String>>>,
         opens: RefCell<VecDeque<Result<(), String>>>,
         modes: RefCell<VecDeque<DeviceMode>>,
+        fallback_mode: Cell<DeviceMode>,
         open_calls: RefCell<Vec<DeviceLocation>>,
     }
 
@@ -353,6 +386,7 @@ mod tests {
                 scans: RefCell::new(VecDeque::new()),
                 opens: RefCell::new(VecDeque::new()),
                 modes: RefCell::new(VecDeque::new()),
+                fallback_mode: Cell::new(DeviceMode::Srv),
                 open_calls: RefCell::new(Vec::new()),
             }
         }
@@ -378,7 +412,7 @@ mod tests {
             self.modes
                 .borrow_mut()
                 .pop_front()
-                .unwrap_or(DeviceMode::Srv)
+                .unwrap_or_else(|| self.fallback_mode.get())
         }
     }
 
@@ -521,7 +555,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconnect_retries_scan_open_and_wrong_mode_then_reports_exhaustion() {
+    async fn reconnect_retries_scan_open_and_wrong_mode_then_reports_startup_timeout() {
         let logger = Logger::for_events(false, FlashEventSink::none());
         let backend = MockDeviceBackend::default();
         backend.scans.borrow_mut().extend([
@@ -548,6 +582,7 @@ mod tests {
             .modes
             .borrow_mut()
             .extend([DeviceMode::Fel, DeviceMode::Fel, DeviceMode::Fel]);
+        backend.fallback_mode.set(DeviceMode::Fel);
         let flasher = Flasher::with_backend(
             OpenixPacker::new(),
             request(DeviceSelector::default(), PostAction::Reboot),
@@ -556,7 +591,7 @@ mod tests {
         );
         assert!(matches!(
             flasher.reconnect_device().await,
-            Err(FlashError::ReconnectFailed)
+            Err(FlashError::UbootStartupTimeout { .. })
         ));
     }
 
