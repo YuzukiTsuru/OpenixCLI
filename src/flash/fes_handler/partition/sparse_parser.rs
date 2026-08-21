@@ -547,6 +547,7 @@ impl<'a> SparseParser<'a> {
                                         "DONT_CARE address exceeds FES sector range".to_string(),
                                     )
                                 })?;
+                            self.chunk_length = 0;
                             self.state = ParseState::ChunkHead;
                             self.last_chunk_type = LastChunkType::DontCare;
                         }
