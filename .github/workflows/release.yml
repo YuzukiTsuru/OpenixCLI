@@ -122,12 +122,12 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Build static binary
-        env:
-          TARGET: ${{ matrix.target }}
-          TARGET_CFLAGS: -I/usr/include
         run: |
+          TARGET="${{ matrix.target }}"
           target_env=${TARGET^^}
           target_env=${target_env//-/_}
+          target_arch=${TARGET%%-*}
+          export TARGET_CFLAGS="-include sys/types.h -idirafter /usr/include -idirafter /usr/include/${target_arch}-linux-gnu"
           export "CARGO_TARGET_${target_env}_LINKER=musl-gcc"
           cargo build --release --target "$TARGET"
 
