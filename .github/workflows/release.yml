@@ -124,6 +124,7 @@ jobs:
       - name: Build static binary
         env:
           TARGET: ${{ matrix.target }}
+          TARGET_CFLAGS: -I/usr/include
         run: |
           target_env=${TARGET^^}
           target_env=${target_env//-/_}
