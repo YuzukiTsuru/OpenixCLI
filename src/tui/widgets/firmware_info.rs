@@ -187,9 +187,7 @@ impl FirmwareState {
     /// Select/deselect all partitions
     pub fn toggle_all_partitions(&mut self) {
         let all_selected = self.selected_partitions.iter().all(|&s| s);
-        for sel in &mut self.selected_partitions {
-            *sel = !all_selected;
-        }
+        self.selected_partitions.fill(!all_selected);
     }
 }
 

@@ -76,7 +76,7 @@ fn write_zeros(file: &mut File, length: u64) -> Result<(), String> {
 
 fn write_fill(file: &mut File, pattern: [u8; 4], length: u64) -> Result<(), String> {
     let mut buffer = [0u8; BUFFER_SIZE];
-    for chunk in buffer.chunks_exact_mut(4) {
+    for chunk in buffer.as_chunks_mut::<4>().0 {
         chunk.copy_from_slice(&pattern);
     }
     let mut remaining = length;

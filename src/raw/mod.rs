@@ -261,7 +261,7 @@ mod tests {
         let bytes = build_virtual_mbr(0x1234, 7, 3).unwrap();
         assert_eq!(bytes.len(), 3 * MBR_SIZE);
 
-        for (index, copy) in bytes.chunks_exact(MBR_SIZE).enumerate() {
+        for (index, copy) in bytes.as_chunks::<MBR_SIZE>().0.iter().enumerate() {
             assert_eq!(u32::from_le_bytes(copy[16..20].try_into().unwrap()), 3);
             assert_eq!(
                 u32::from_le_bytes(copy[20..24].try_into().unwrap()),

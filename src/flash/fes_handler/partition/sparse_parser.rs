@@ -742,7 +742,7 @@ impl<'a> SparseParser<'a> {
 
         let fill_size = MAX_FILL_COUNT as usize * 16;
         let mut fill_buffer: Vec<u8> = vec![0u8; fill_size];
-        for chunk in fill_buffer.chunks_exact_mut(4) {
+        for chunk in fill_buffer.as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&fill_value.to_le_bytes());
         }
 
