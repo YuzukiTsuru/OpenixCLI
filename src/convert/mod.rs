@@ -56,7 +56,7 @@ impl ConvertTarget {
 /// Controls secure boot component selection during conversion.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum SecureMode {
-    /// Detect a non-placeholder TOC1 entry in the input firmware.
+    /// Detect from the flashing U-Boot header's `secure_mode` flag.
     Auto,
     /// Force TOC0/TOC1 secure boot components.
     Enabled,
@@ -184,14 +184,6 @@ fn load_partitions(packer: &mut OpenixPacker) -> Result<Vec<PartitionEntry>, Str
         .collect()
 }
 
-fn detect_secure_firmware(packer: &OpenixPacker) -> bool {
-    packer
-        .get_image_info()
-        .files
-        .iter()
-        .any(|file| file.subtype == "TOC1_00000000000" && file.original_length > 8)
-}
-
 fn detect_flash_offsets(packer: &mut OpenixPacker) -> FlashOffsets {
     if let Ok(dtb) = packer.get_dtb() {
         if let Ok(offsets) = parse_flash_offsets(&dtb) {
@@ -247,7 +239,7 @@ pub fn convert(options: ConvertOptions) -> Result<ConvertResult, String> {
 
     let partitions = load_partitions(&mut packer)?;
     let offsets = detect_flash_offsets(&mut packer);
-    let detected_secure = detect_secure_firmware(&packer);
+    let detected_secure = packer.is_secure_firmware();
     let is_secure = match options.secure {
         SecureMode::Auto => detected_secure,
         SecureMode::Enabled => true,

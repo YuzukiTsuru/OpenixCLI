@@ -144,19 +144,65 @@ impl UBootNormalGpioCfg {
 
 /// U-Boot data header structure
 ///
-/// Contains DRAM parameters and other hardware initialization data
+/// Mirror of the Allwinner `struct spare_boot_data_head` that follows the
+/// U-Boot base header. Holds DRAM parameters and other hardware init data,
+/// storage GPIO pin maps, boot-mode flags, and OTA / secure-boot metadata.
+///
+/// Field order matches the C layout. The `challenge_offset` tail is one
+/// `uint64_t` on 64-bit builds and `uint32_t` + `uint32_t` padding on 32-bit
+/// builds; both occupy the same bytes, so it is modeled as a single `u64`.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct UBootDataHeader {
     pub dram_para: [u32; 32],
+    /// CPU clock in MHz.
     pub run_clock: i32,
+    /// CPU core voltage in mV.
     pub run_core_vol: i32,
+    /// UART controller number.
     pub uart_port: i32,
+    /// UART GPIO info.
     pub uart_gpio: [UBootNormalGpioCfg; 2],
+    /// TWI controller number.
     pub twi_port: i32,
+    /// TWI GPIO info.
     pub twi_gpio: [UBootNormalGpioCfg; 2],
+    /// Boot mode: normal boot, USB burn, card burn.
     pub work_mode: i32,
+    /// 0: NAND, 1: SD card, 2: SPI NOR.
     pub storage_type: i32,
+    /// NAND GPIO info.
+    pub nand_gpio: [UBootNormalGpioCfg; 32],
+    /// NAND spare info.
+    pub nand_spare_data: [u8; 256],
+    /// SD card GPIO info.
+    pub sdcard_gpio: [UBootNormalGpioCfg; 32],
+    /// SD card spare info.
+    pub sdcard_spare_data: [u8; 256],
+    pub secureos_exist: u8,
+    pub monitor_exist: u8,
+    /// Bit mask of enabled functions, see `UBOOT_FUNC_MASK_EN`.
+    pub func_mask: u8,
+    pub res: [u8; 1],
+    /// Used in OTA update.
+    pub uboot_start_sector_in_mmc: u32,
+    /// Device tree offset within U-Boot.
+    pub dtb_offset: i32,
+    /// Boot package size; boot0 passes this value.
+    pub boot_package_size: i32,
+    /// Real DRAM size detected at boot.
+    pub dram_scan_size: u32,
+    /// Reserved, keeps the structure aligned.
+    pub reserved: [i32; 1],
+    pub pmu_type: u16,
+    pub uart_input: u16,
+    pub key_input: u16,
+    /// Updated by `update_uboot`.
+    pub secure_mode: u8,
+    /// Updated by `update_uboot`.
+    pub debug_mode: u8,
+    /// Challenge salt for security checks; do not use directly, use with salt.
+    pub challenge_offset: u64,
 }
 
 impl UBootDataHeader {
@@ -180,11 +226,23 @@ impl UBootDataHeader {
         Ok(unsafe { &mut *ptr })
     }
 
-    /// Set work mode in the header
+    /// Set work mode in the header.
+    ///
+    /// Writes through the parsed structure so no manual field offset is needed.
+    /// No-op when the buffer is too short to hold the full data header.
     pub fn set_work_mode(data: &mut [u8], mode: u32) {
         if let Ok(header) = Self::parse_mut(data) {
             header.work_mode = mode as i32;
         }
+    }
+
+    /// Read the secure-boot mode flag from the header.
+    ///
+    /// The field is set by `update_uboot`; a non-zero value indicates the
+    /// U-Boot was built for secure boot. Returns `None` when the buffer is too
+    /// short to hold the full data header.
+    pub fn secure_mode(data: &[u8]) -> Option<u8> {
+        Self::parse(data).ok().map(|header| header.secure_mode)
     }
 }
 
@@ -219,13 +277,23 @@ impl UBootHeader {
         Ok(unsafe { &mut *ptr })
     }
 
-    /// Set work mode in the header
+    /// Set work mode in the embedded data header.
+    ///
+    /// Writes through the parsed structure so no manual field offset is needed.
+    /// No-op when the buffer is too short to hold the full header.
     pub fn set_work_mode(data: &mut [u8], mode: u32) {
-        let data_offset = std::mem::size_of::<UBootBaseHeader>();
-        if data.len() < data_offset {
-            return;
+        if let Ok(header) = Self::parse_mut(data) {
+            header.uboot_data.work_mode = mode as i32;
         }
-        UBootDataHeader::set_work_mode(&mut data[data_offset..], mode);
+    }
+
+    /// Read the secure-boot mode flag from the embedded data header.
+    ///
+    /// Returns `None` when the buffer is too short to hold the full header.
+    pub fn secure_mode(data: &[u8]) -> Option<u8> {
+        Self::parse(data)
+            .ok()
+            .map(|header| header.uboot_data.secure_mode)
     }
 }
 
@@ -318,6 +386,77 @@ mod tests {
 
         UBootHeader::set_work_mode(&mut [], 1);
         UBootHeader::set_work_mode(&mut [0; 1], 1);
+    }
+
+    #[test]
+    fn spare_boot_data_head_layout_matches_the_c_struct() {
+        use std::mem::MaybeUninit;
+        use std::ptr::addr_of;
+
+        // normal_gpio_cfg = 6 control bytes + 2 reserved = 8 bytes.
+        assert_eq!(std::mem::size_of::<UBootNormalGpioCfg>(), 8);
+        // Full Allwinner spare_boot_data_head.
+        assert_eq!(std::mem::size_of::<UBootDataHeader>(), 1248);
+        // UBootBaseHeader (48) + UBootDataHeader (1248).
+        assert_eq!(std::mem::size_of::<UBootHeader>(), 1296);
+
+        macro_rules! assert_field_offset {
+            ($header:expr, $field:ident, $expected:expr) => {
+                assert_eq!(
+                    unsafe { addr_of!((*$header).$field) as usize - $header as usize },
+                    $expected,
+                    "offset of {}",
+                    stringify!($field)
+                );
+            };
+        }
+
+        let header = MaybeUninit::<UBootDataHeader>::uninit();
+        let base = header.as_ptr();
+
+        assert_field_offset!(base, dram_para, 0);
+        assert_field_offset!(base, run_clock, 128);
+        assert_field_offset!(base, uart_port, 136);
+        assert_field_offset!(base, uart_gpio, 140);
+        assert_field_offset!(base, twi_port, 156);
+        assert_field_offset!(base, twi_gpio, 160);
+        assert_field_offset!(base, work_mode, 176);
+        assert_field_offset!(base, storage_type, 180);
+        assert_field_offset!(base, nand_gpio, 184);
+        assert_field_offset!(base, nand_spare_data, 440);
+        assert_field_offset!(base, sdcard_gpio, 696);
+        assert_field_offset!(base, sdcard_spare_data, 952);
+        assert_field_offset!(base, secureos_exist, 1208);
+        assert_field_offset!(base, uboot_start_sector_in_mmc, 1212);
+        assert_field_offset!(base, dtb_offset, 1216);
+        assert_field_offset!(base, boot_package_size, 1220);
+        assert_field_offset!(base, dram_scan_size, 1224);
+        assert_field_offset!(base, pmu_type, 1232);
+        assert_field_offset!(base, secure_mode, 1238);
+        assert_field_offset!(base, debug_mode, 1239);
+        assert_field_offset!(base, challenge_offset, 1240);
+    }
+
+    #[test]
+    fn secure_mode_reader_reads_the_flag_and_rejects_short_buffers() {
+        let mut data_bytes = vec![0u8; std::mem::size_of::<UBootDataHeader>()];
+        assert_eq!(UBootDataHeader::secure_mode(&data_bytes), Some(0));
+        UBootDataHeader::parse_mut(&mut data_bytes)
+            .unwrap()
+            .secure_mode = 1;
+        assert_eq!(UBootDataHeader::secure_mode(&data_bytes), Some(1));
+
+        // Whole-image convenience reads the flag past the base header.
+        let mut uboot = vec![0u8; std::mem::size_of::<UBootHeader>()];
+        UBootHeader::parse_mut(&mut uboot)
+            .unwrap()
+            .uboot_data
+            .secure_mode = 1;
+        assert_eq!(UBootHeader::secure_mode(&uboot), Some(1));
+
+        // Buffers too short to hold the header report None.
+        assert_eq!(UBootDataHeader::secure_mode(&[]), None);
+        assert_eq!(UBootHeader::secure_mode(&[0; 200]), None);
     }
 
     #[test]

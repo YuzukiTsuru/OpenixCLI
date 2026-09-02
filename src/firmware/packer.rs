@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+use crate::config::boot_header::UBootHeader;
 use crate::firmware::types::*;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -430,6 +431,22 @@ impl OpenixPacker {
     /// Get U-Boot data
     pub fn get_uboot(&mut self) -> Result<Vec<u8>, PackerError> {
         self.get_image_data_by_name("uboot")
+    }
+
+    /// Get whether the firmware is a secure-boot build.
+    ///
+    /// Reads the `secure_mode` flag stamped into the flashing U-Boot
+    /// (`u-boot-efex.fex`) boot data header rather than inferring it from the
+    /// presence of a TOC1 component. A non-zero flag means that U-Boot was
+    /// built for secure boot, so boot components are TOC0/TOC1. Returns `false`
+    /// when the firmware carries no flashing U-Boot or its header is too short
+    /// to contain the flag.
+    pub fn is_secure_firmware(&mut self) -> bool {
+        self.get_uboot()
+            .ok()
+            .and_then(|uboot| UBootHeader::secure_mode(&uboot))
+            .unwrap_or(0)
+            != 0
     }
 
     /// Get MBR (Master Boot Record) data
