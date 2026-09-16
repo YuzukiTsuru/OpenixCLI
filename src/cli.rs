@@ -26,7 +26,7 @@ pub struct Cli {
     #[arg(short, long, global = true, help = "Enable verbose output")]
     pub verbose: bool,
 
-    /// USB backend selection (Windows: winusb default; use libusb if open fails)
+    /// USB backend selection (Windows: winusb default)
     #[arg(
         long,
         global = true,

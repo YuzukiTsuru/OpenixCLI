@@ -62,8 +62,6 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Apply USB backend selection before any device access.
-    // On Windows the default (Auto) resolves to WinUSB, which fails to open
-    // some devices installed via Zadig/libwdi; --backend libusb works there.
     configure_usb_backend(cli.backend);
 
     match cli.command {
