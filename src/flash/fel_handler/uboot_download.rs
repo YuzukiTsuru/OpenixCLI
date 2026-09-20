@@ -6,8 +6,11 @@ use crate::config::boot_header::{UBootHeader, WORK_MODE_USB_PRODUCT};
 use crate::flash::protocol::FelOps;
 use crate::utils::{FlashError, FlashResult, Logger};
 
-/// Maximum U-Boot size (2 MB)
-const UBOOT_MAX_LEN: usize = 2 * 1024 * 1024;
+/// Reserved U-Boot memory slot size (2 MB).
+///
+/// Newer U-Boot images may exceed this size. The value remains the base
+/// address for the DTB, sys_config, and board_config slots.
+const UBOOT_SLOT_LEN: usize = 2 * 1024 * 1024;
 /// Maximum DTB size (1 MB)
 const DTB_MAX_LEN: usize = 1024 * 1024;
 /// Maximum sys_config.bin size (512 KB)
@@ -30,8 +33,12 @@ impl<'a> UbootDownload<'a> {
 
     /// Execute U-Boot download
     ///
-    /// Downloads U-Boot image with work mode set to USB product mode,
-    /// then downloads DTB, sys_config, and board_config to appropriate memory locations
+    /// Downloads the DTB, sys_config, and board_config first, then downloads
+    /// U-Boot with work mode set to USB product mode.
+    ///
+    /// U-Boot is written last because newer images can be larger than the
+    /// reserved 2 MiB slot and may overwrite the component slots that follow
+    /// it in memory.
     pub async fn execute<C: FelOps>(
         &self,
         ctx: &C,
@@ -40,11 +47,11 @@ impl<'a> UbootDownload<'a> {
         sysconfig_data: &[u8],
         board_config_data: Option<&[u8]>,
     ) -> FlashResult<()> {
-        if uboot_data.len() > UBOOT_MAX_LEN {
-            return Err(FlashError::InvalidFirmwareFormat(format!(
-                "U-Boot exceeds {} byte memory slot",
-                UBOOT_MAX_LEN
-            )));
+        if uboot_data.len() > UBOOT_SLOT_LEN {
+            self.logger.info(&format!(
+                "U-Boot exceeds the 2 MiB memory slot ({} bytes); continuing",
+                uboot_data.len()
+            ));
         }
         if dtb_data.is_some_and(|data| data.len() > DTB_MAX_LEN) {
             return Err(FlashError::InvalidFirmwareFormat(format!(
@@ -64,11 +71,6 @@ impl<'a> UbootDownload<'a> {
                 BOARD_CONFIG_BIN_MAX_LEN
             )));
         }
-
-        self.logger.info(&format!(
-            "Downloading U-Boot ({} bytes)...",
-            uboot_data.len()
-        ));
 
         let mut uboot_buffer = uboot_data.to_vec();
         UBootHeader::set_work_mode(&mut uboot_buffer, WORK_MODE_USB_PRODUCT);
@@ -91,12 +93,16 @@ impl<'a> UbootDownload<'a> {
             uboot_data.len()
         ));
 
-        ctx.fel_write(run_addr, &uboot_buffer)
-            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
-
         self.write_dtb(ctx, run_addr, dtb_data)?;
         self.write_sysconfig(ctx, run_addr, sysconfig_data)?;
         self.write_board_config(ctx, run_addr, board_config_data)?;
+
+        self.logger.info(&format!(
+            "Downloading U-Boot ({} bytes)...",
+            uboot_data.len()
+        ));
+        ctx.fel_write(run_addr, &uboot_buffer)
+            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
         self.logger
             .debug(&format!("Executing U-Boot at 0x{:x}", run_addr));
@@ -110,7 +116,7 @@ impl<'a> UbootDownload<'a> {
 
     /// Write DTB (Device Tree Blob) to device memory
     ///
-    /// DTB is placed after U-Boot in memory
+    /// DTB is placed in the memory slot after the reserved U-Boot area.
     fn write_dtb<C: FelOps>(
         &self,
         ctx: &C,
@@ -118,7 +124,7 @@ impl<'a> UbootDownload<'a> {
         dtb_data: Option<&[u8]>,
     ) -> FlashResult<()> {
         if let Some(dtb) = dtb_data {
-            let dtb_sysconfig_base = Self::checked_address(run_addr, UBOOT_MAX_LEN)?;
+            let dtb_sysconfig_base = Self::checked_address(run_addr, UBOOT_SLOT_LEN)?;
             ctx.fel_write(dtb_sysconfig_base, dtb)
                 .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
             self.logger.debug(&format!(
@@ -132,14 +138,14 @@ impl<'a> UbootDownload<'a> {
 
     /// Write system configuration to device memory
     ///
-    /// SysConfig is placed after DTB in memory
+    /// SysConfig is placed in the memory slot after the reserved U-Boot and DTB areas.
     fn write_sysconfig<C: FelOps>(
         &self,
         ctx: &C,
         run_addr: u32,
         sysconfig_data: &[u8],
     ) -> FlashResult<()> {
-        let sys_config_bin_base = Self::checked_address(run_addr, UBOOT_MAX_LEN + DTB_MAX_LEN)?;
+        let sys_config_bin_base = Self::checked_address(run_addr, UBOOT_SLOT_LEN + DTB_MAX_LEN)?;
         ctx.fel_write(sys_config_bin_base, sysconfig_data)
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
         self.logger.debug(&format!(
@@ -152,7 +158,8 @@ impl<'a> UbootDownload<'a> {
 
     /// Write board configuration to device memory
     ///
-    /// BoardConfig is placed after sys_config in memory
+    /// BoardConfig is placed in the memory slot after the reserved U-Boot, DTB,
+    /// and sys_config areas.
     fn write_board_config<C: FelOps>(
         &self,
         ctx: &C,
@@ -162,7 +169,7 @@ impl<'a> UbootDownload<'a> {
         if let Some(board_config) = board_config_data {
             let board_config_bin_base = Self::checked_address(
                 run_addr,
-                UBOOT_MAX_LEN + DTB_MAX_LEN + SYS_CONFIG_BIN00_MAX_LEN,
+                UBOOT_SLOT_LEN + DTB_MAX_LEN + SYS_CONFIG_BIN00_MAX_LEN,
             )?;
             ctx.fel_write(board_config_bin_base, board_config)
                 .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
@@ -199,7 +206,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_places_all_components_in_non_overlapping_slots() {
+    async fn execute_downloads_components_before_uboot() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&events);
         let logger = Logger::for_events(
@@ -223,17 +230,17 @@ mod tests {
 
         let writes = ctx.fel_writes.borrow();
         assert_eq!(writes.len(), 4);
-        assert_eq!(writes[0].addr, run_addr);
-        assert_eq!(writes[1].addr, run_addr + UBOOT_MAX_LEN as u32);
+        assert_eq!(writes[0].addr, run_addr + UBOOT_SLOT_LEN as u32);
+        assert_eq!(
+            writes[1].addr,
+            run_addr + (UBOOT_SLOT_LEN + DTB_MAX_LEN) as u32
+        );
         assert_eq!(
             writes[2].addr,
-            run_addr + (UBOOT_MAX_LEN + DTB_MAX_LEN) as u32
+            run_addr + (UBOOT_SLOT_LEN + DTB_MAX_LEN + SYS_CONFIG_BIN00_MAX_LEN) as u32
         );
-        assert_eq!(
-            writes[3].addr,
-            run_addr + (UBOOT_MAX_LEN + DTB_MAX_LEN + SYS_CONFIG_BIN00_MAX_LEN) as u32
-        );
-        let uploaded = UBootHeader::parse(&writes[0].data).unwrap();
+        assert_eq!(writes[3].addr, run_addr);
+        let uploaded = UBootHeader::parse(&writes[3].data).unwrap();
         let mode = uploaded.uboot_data.work_mode;
         assert_eq!(mode, WORK_MODE_USB_PRODUCT as i32);
         assert_eq!(&*ctx.fel_execs.borrow(), &[run_addr]);
@@ -256,7 +263,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_rejects_short_and_oversized_components() {
+    async fn execute_rejects_short_and_oversized_components_but_allows_oversized_uboot() {
         let logger = Logger::for_events(false, crate::flash::FlashEventSink::none());
         let handler = UbootDownload::new(&logger);
         let ctx = MockProtocol::default();
@@ -265,12 +272,12 @@ mod tests {
             handler.execute(&ctx, &[], None, &[], None).await,
             Err(FlashError::InvalidFirmwareFormat(_))
         ));
-        assert!(matches!(
-            handler
-                .execute(&ctx, &vec![0; UBOOT_MAX_LEN + 1], None, &[], None)
-                .await,
-            Err(FlashError::InvalidFirmwareFormat(_))
-        ));
+        let mut oversized_uboot = uboot_image(0);
+        oversized_uboot.resize(UBOOT_SLOT_LEN + 1, 0);
+        assert!(handler
+            .execute(&ctx, &oversized_uboot, None, &[], None)
+            .await
+            .is_ok());
         assert!(matches!(
             handler
                 .execute(
